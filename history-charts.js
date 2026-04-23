@@ -1,5 +1,5 @@
 // ================= GRÁFICOS DE HISTÓRICO =================
-// V5 - Turnos responsivos, PDF, modal sem dados, linha fixa e Moldes/Blanks ativos.
+// V6 - Exportação premium, empty state animado e tutorial onboarding do gráfico.
 (function () {
   'use strict';
 
@@ -291,6 +291,7 @@
     }
 
     removerBotoesDesnecessarios();
+    inserirBotaoTutorial();
     inserirBotaoPdf();
   }
 
@@ -305,6 +306,20 @@
     });
   }
 
+
+  function inserirBotaoTutorial() {
+    if (document.getElementById('historyTutorialBtn')) return;
+    const anchor = document.querySelector('.btn-generate') || document.getElementById('toggleChartBtn') || document.querySelector('.period-selector, .period-options, .period-buttons');
+    if (!anchor || !anchor.parentNode) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'historyTutorialBtn';
+    btn.className = 'history-tutorial-btn history-premium-action';
+    btn.innerHTML = '<span class="history-action-icon"><i class="fas fa-route"></i></span><span><strong>Tutorial</strong><small>Aprenda o gráfico</small></span>';
+    btn.addEventListener('click', abrirTutorialHistorico);
+    anchor.parentNode.appendChild(btn);
+  }
+
   function inserirBotaoPdf() {
     if (document.getElementById('exportHistoryPdfBtn')) return;
     const anchor = document.querySelector('.btn-generate') || document.getElementById('toggleChartBtn') || document.querySelector('.period-selector, .period-options, .period-buttons');
@@ -312,8 +327,8 @@
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.id = 'exportHistoryPdfBtn';
-    btn.className = 'export-pdf-btn';
-    btn.innerHTML = '<i class="fas fa-file-pdf"></i> Exportar PDF';
+    btn.className = 'export-pdf-btn history-premium-action';
+    btn.innerHTML = '<span class="history-action-icon"><i class="fas fa-file-pdf"></i></span><span><strong>Exportar PDF</strong><small>Gráfico + tabela</small></span>';
     btn.addEventListener('click', exportarPdfHistorico);
     anchor.parentNode.appendChild(btn);
   }
@@ -358,11 +373,13 @@
 
       displayedData = filtrarPorPeriodo(dados, period);
       if (displayedData.length === 0) {
+        mostrarEmptyStateGrafico(machine, data, period);
         criarGraficoVazio();
         atualizarTabela([]);
         atualizarInsights([]);
         abrirModalSemDados(machine, data, period);
       } else {
+        esconderEmptyStateGrafico();
         criarGrafico(displayedData);
         atualizarTabela(displayedData);
         atualizarInsights(displayedData);
@@ -421,6 +438,7 @@
   }
 
   function criarGrafico(dados) {
+    esconderEmptyStateGrafico();
     const canvas = document.getElementById('historyChart');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -505,7 +523,8 @@
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
-        plugins: { title: { display: true, text: 'Nenhum dado encontrado para o período' } }
+        plugins: { legend: { display: false }, title: { display: false } },
+        scales: { y: { display: false }, x: { display: false } }
       }
     });
   }
@@ -606,6 +625,112 @@
       'custom': 'Período personalizado'
     };
     return labels[period] || 'Período selecionado';
+  }
+
+
+  function getChartWrapper() {
+    const canvas = document.getElementById('historyChart');
+    if (!canvas) return null;
+    const inner = canvas.closest('.chart-inner') || canvas.parentElement;
+    if (inner && getComputedStyle(inner).position === 'static') inner.style.position = 'relative';
+    return inner;
+  }
+
+  function mostrarEmptyStateGrafico(machine, data, period) {
+    const wrapper = getChartWrapper();
+    if (!wrapper) return;
+    esconderEmptyStateGrafico();
+    const state = document.createElement('div');
+    state.id = 'historyChartEmptyState';
+    state.className = 'history-chart-empty-state';
+    state.innerHTML = `
+      <div class="history-empty-visual" aria-hidden="true">
+        <span class="empty-orbit empty-orbit-one"></span>
+        <span class="empty-orbit empty-orbit-two"></span>
+        <svg viewBox="0 0 240 170" role="img">
+          <defs>
+            <linearGradient id="emptyGrad" x1="0" x2="1" y1="0" y2="1">
+              <stop offset="0" stop-color="#2563eb"/>
+              <stop offset="1" stop-color="#7c3aed"/>
+            </linearGradient>
+          </defs>
+          <rect x="34" y="34" width="172" height="104" rx="18" fill="#f8fafc" stroke="#dbeafe" stroke-width="3"/>
+          <path class="empty-chart-line" d="M58 111 C82 72, 102 86, 123 70 S164 62, 184 48" fill="none" stroke="url(#emptyGrad)" stroke-width="8" stroke-linecap="round"/>
+          <circle cx="58" cy="111" r="7" fill="#2563eb"/>
+          <circle cx="123" cy="70" r="7" fill="#2563eb"/>
+          <circle cx="184" cy="48" r="7" fill="#7c3aed"/>
+          <path d="M72 137 H168" stroke="#cbd5e1" stroke-width="6" stroke-linecap="round"/>
+          <path d="M89 151 H151" stroke="#e2e8f0" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="history-empty-copy">
+        <strong>Nenhum dado encontrado para este período</strong>
+        <span>Máquina ${machine || '-'} · ${data || '-'} · ${getPeriodoLabel(period)}</span>
+      </div>
+    `;
+    wrapper.appendChild(state);
+  }
+
+  function esconderEmptyStateGrafico() {
+    const state = document.getElementById('historyChartEmptyState');
+    if (state) state.remove();
+  }
+
+  function abrirTutorialHistorico() {
+    fecharTutorialHistorico();
+    const overlay = document.createElement('div');
+    overlay.className = 'history-onboarding-overlay';
+    overlay.id = 'historyOnboardingOverlay';
+    overlay.innerHTML = `
+      <div class="history-onboarding" role="dialog" aria-modal="true" aria-labelledby="historyTutorialTitle">
+        <button type="button" class="history-onboarding-close" aria-label="Fechar tutorial">×</button>
+        <div class="history-onboarding-hero">
+          <div class="history-onboarding-badge"><i class="fas fa-sparkles"></i> Onboarding SaaS</div>
+          <h3 id="historyTutorialTitle">Como analisar o histórico</h3>
+          <p>Use máquina, data, turnos e séries para enxergar a evolução de Moldes, Blanks, Neck Rings e Funís com segurança.</p>
+        </div>
+        <div class="history-onboarding-steps">
+          <article class="history-step-card">
+            <div class="history-step-number">1</div>
+            <div class="history-step-illustration"><i class="fas fa-industry"></i><span></span></div>
+            <h4>Escolha a máquina</h4>
+            <p>Selecione a máquina desejada. O gráfico carrega automaticamente os dados salvos para ela.</p>
+          </article>
+          <article class="history-step-card">
+            <div class="history-step-number">2</div>
+            <div class="history-step-illustration"><i class="fas fa-clock"></i><span></span></div>
+            <h4>Defina o período</h4>
+            <p>Use 24h, Turno 1, Turno 2, Turno 3 ou personalize o intervalo de análise.</p>
+          </article>
+          <article class="history-step-card">
+            <div class="history-step-number">3</div>
+            <div class="history-step-illustration"><i class="fas fa-layer-group"></i><span></span></div>
+            <h4>Controle as séries</h4>
+            <p>Moldes e Blanks já abrem ativos. Ative Neck Rings e Funís quando precisar comparar.</p>
+          </article>
+          <article class="history-step-card">
+            <div class="history-step-number">4</div>
+            <div class="history-step-illustration"><i class="fas fa-file-pdf"></i><span></span></div>
+            <h4>Exporte o relatório</h4>
+            <p>Gere um PDF com o gráfico e a tabela com as quantidades por horário.</p>
+          </article>
+        </div>
+        <div class="history-onboarding-footer">
+          <button type="button" class="history-onboarding-primary">Começar análise</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.history-onboarding-close')?.addEventListener('click', fecharTutorialHistorico);
+    overlay.querySelector('.history-onboarding-primary')?.addEventListener('click', fecharTutorialHistorico);
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) fecharTutorialHistorico();
+    });
+  }
+
+  function fecharTutorialHistorico() {
+    const existing = document.getElementById('historyOnboardingOverlay');
+    if (existing) existing.remove();
   }
 
   function abrirModalSemDados(machine, data, period) {
