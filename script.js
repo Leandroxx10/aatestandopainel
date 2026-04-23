@@ -33,6 +33,9 @@ let timeoutClicks = null;
 // Controle para mostrar apenas máquinas críticas
 let mostrarCriticos = false;
 
+// Evita gravações duplicadas quando o usuário clica rapidamente ou o navegador dispara o mesmo evento novamente.
+const pendingMachineWrites = new Set();
+
 // Estado do modo escuro
 let modoEscuroAtivo = localStorage.getItem('modoEscuro') === 'true';
 
@@ -705,6 +708,11 @@ document.addEventListener('click', function(event) {
 // ====================================================
 
 async function alterar(maquinaId, tipo, delta) {
+    const writeKey = `${maquinaId}:${tipo}`;
+    if (pendingMachineWrites.has(writeKey)) {
+        return;
+    }
+
     const element = document.getElementById(`${maquinaId}-${tipo}`);
     if (!element) return;
 
@@ -712,6 +720,7 @@ async function alterar(maquinaId, tipo, delta) {
     const newValue = Math.max(0, currentValue + delta);
 
     if (newValue === currentValue) return;
+    pendingMachineWrites.add(writeKey);
 
     // Atualização imediata na tela
     element.textContent = newValue;
@@ -745,6 +754,8 @@ async function alterar(maquinaId, tipo, delta) {
         console.error('❌ Erro ao alterar quantidade:', error);
         element.textContent = currentValue;
         mostrarNotificacao(`Erro ao salvar alteração da máquina ${maquinaId}.`, 'error');
+    } finally {
+        pendingMachineWrites.delete(writeKey);
     }
 }
 
@@ -1467,6 +1478,11 @@ function toggleModoDigitado(maquinaId, tipo) {
 }
 
 async function atualizarPorInput(maquinaId, tipo, valor) {
+    const writeKey = `${maquinaId}:${tipo}`;
+    if (pendingMachineWrites.has(writeKey)) {
+        return;
+    }
+
     const spanElement = document.getElementById(`${maquinaId}-${tipo}`);
     const inputElement = document.getElementById(`input-${maquinaId}-${tipo}`);
     const btnElement = inputElement.closest('.controles').querySelector('.btn-digitado');
@@ -1487,6 +1503,8 @@ async function atualizarPorInput(maquinaId, tipo, valor) {
     if (novoValor === valorAtual) {
         return;
     }
+
+    pendingMachineWrites.add(writeKey);
 
     try {
         if (typeof setWithAudit === 'function') {
@@ -1512,6 +1530,8 @@ async function atualizarPorInput(maquinaId, tipo, valor) {
         inputElement.value = valorAtual;
         mostrarNotificacao(`Erro ao salvar ${tipo} da máquina ${maquinaId}.`, 'error');
         return;
+    } finally {
+        pendingMachineWrites.delete(writeKey);
     }
 
     // Feedback
