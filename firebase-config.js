@@ -29,9 +29,12 @@ const historicoRef = db.ref("historico");
 const comentariosRef = db.ref("comentarios");
 const imagensRef = db.ref("imagens");
 const adminConfigRef = db.ref("adminConfig");
-const manutencaoRef = db.ref("manutencao"); // NOVO: Status de manutenção
-
-// ================= FUNÇÕES DE CONFIGURAÇÃO =================
+const manutencaoRef = db.ref("manutencao");
+const configuracoesRef = db.ref("configuracoes");
+const usersRef = db.ref("users");
+const logsRef = db.ref("logs");
+const backupsRef = db.ref("backups");
+const systemSettingsRef = db.ref("systemSettings");
 
 // Limites padrão
 const DEFAULT_LIMITS = {
@@ -136,44 +139,286 @@ async function getMachineMaintenanceStatus(machineId) {
 
 // ================= FUNÇÕES AUXILIARES =================
 
-// Verificar conexão com o Firebase
+// Verificar conexão com o Firebase (para páginas com conexão status)
 function checkFirebaseConnection() {
     const connectedRef = db.ref(".info/connected");
     connectedRef.on("value", function(snap) {
         if (snap.val() === true) {
             console.log("✅ Conectado ao Firebase");
-            updateConnectionStatus('connected', 'Conectado ao servidor');
+            // Apenas atualiza se o elemento existir
+            const statusElement = document.getElementById('connectionStatus');
+            if (statusElement) {
+                statusElement.textContent = 'Conectado ao servidor';
+                statusElement.style.color = '#10b981';
+            }
         } else {
             console.log("⚠️ Desconectado do Firebase");
-            updateConnectionStatus('disconnected', 'Desconectado do servidor');
+            const statusElement = document.getElementById('connectionStatus');
+            if (statusElement) {
+                statusElement.textContent = 'Desconectado do servidor';
+                statusElement.style.color = '#ef4444';
+            }
         }
     });
 }
 
-// Atualizar status de conexão na interface
-function updateConnectionStatus(status, message) {
-    const statusElement = document.getElementById('connectionStatus');
-    if (statusElement) {
-        statusElement.textContent = message;
-        
-        switch(status) {
-            case 'connected':
-                statusElement.style.color = 'var(--success)';
-                break;
-            case 'disconnected':
-                statusElement.style.color = 'var(--danger)';
-                break;
-            case 'loading':
-                statusElement.style.color = 'var(--warning)';
-                break;
+// Inicializar verificação de conexão (se o elemento existir)
+if (document.getElementById('connectionStatus')) {
+    document.addEventListener('DOMContentLoaded', function() {
+        checkFirebaseConnection();
+    });
+}
+
+
+// ================= SEGURANÇA, NORMALIZAÇÃO E AUDITORIA =================
+
+function normalizeRole(role) {
+    const value = String(role || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase();
+
+    if (value === 'admin' || value === 'administrador') return 'admin';
+    if (value === 'lideranca' || value === 'lider') return 'lideranca';
+    if (value === 'carregador' || value === 'abastecedor' || value === 'operador') return 'carregador';
+    return value || 'carregador';
+}
+
+function normalizePrefixObject(key, data = {}) {
+    const displayName =
+        data.prefixoDetalhado ||
+        data.prefixo_detalhado ||
+        data.detalhado ||
+        data.descricao ||
+        data.nome ||
+        key;
+
+    return {
+        id: key,
+        nome: data.nome || key,
+        displayName,
+        prefixoDetalhado: displayName,
+        ...data
+    };
+}
+
+function buildPrefixList(prefixosData) {
+    if (!prefixosData) return [];
+    return Object.keys(prefixosData).map(key => normalizePrefixObject(key, prefixosData[key]));
+}
+
+function findPrefixRecord(prefixos, value) {
+    const search = String(value || '').trim();
+    return (prefixos || []).find(pref =>
+        pref.id === search ||
+        pref.nome === search ||
+        pref.displayName === search ||
+        pref.prefixoDetalhado === search ||
+        pref.prefixo_detalhado === search
+    ) || null;
+}
+
+function getMachinePrefixDisplay(machine, prefixos = []) {
+    if (!machine) return '';
+    return (
+        machine.prefixoDetalhado ||
+        machine.prefixo_detalhado ||
+        findPrefixRecord(prefixos, machine.prefixo)?.displayName ||
+        machine.prefixo ||
+        ''
+    );
+}
+
+async function getPrefixosFromFirebase() {
+    const snapshot = await db.ref('prefixDatabase').once('value');
+    return buildPrefixList(snapshot.val());
+}
+
+
+function getPrefixImageUrl(prefixData = {}) {
+    const directCandidates = [
+        prefixData.imageUrl,
+        prefixData.imageURL,
+        prefixData.imagemUrl,
+        prefixData.imagemURL,
+        prefixData.linkImagem,
+        prefixData.image,
+        prefixData.img,
+        prefixData.imgbb,
+        prefixData.url,
+        typeof prefixData.imagem === 'string' ? prefixData.imagem : null
+    ].filter(Boolean);
+
+    if (prefixData.imagem && typeof prefixData.imagem === 'object') {
+        directCandidates.unshift(
+            prefixData.imagem.url,
+            prefixData.imagem.display_url,
+            prefixData.imagem.thumb?.url,
+            prefixData.imagem.medium?.url,
+            prefixData.imagem.image?.url
+        );
+    }
+
+    const isImageLike = (value) =>
+        typeof value === 'string' &&
+        (
+            value.includes('i.ibb.co/') ||
+            value.includes('ibb.co/') ||
+            value.includes('imgbb.com/') ||
+            /\.(png|jpg|jpeg|webp|gif|avif|svg)(\?.*)?$/i.test(value)
+        );
+
+    const visited = new Set();
+
+    function deepFind(value) {
+        if (!value || typeof value !== 'object') return '';
+        if (visited.has(value)) return '';
+        visited.add(value);
+
+        for (const entry of Object.values(value)) {
+            if (isImageLike(entry)) return entry;
+            if (entry && typeof entry === 'object') {
+                const nested = deepFind(entry);
+                if (nested) return nested;
+            }
         }
+        return '';
+    }
+
+    const firstDirect = directCandidates.find(isImageLike);
+    return firstDirect || deepFind(prefixData) || '';
+}
+
+function formatPrefixFieldLabel(key) {
+    return String(key || '')
+        .replace(/_/g, ' ')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^./, char => char.toUpperCase());
+}
+
+
+function getAuditUser() {
+    const user = auth.currentUser;
+    return {
+        uid: user?.uid || null,
+        email: user?.email || localStorage.getItem('userEmail') || 'desconhecido'
+    };
+}
+
+function sanitizeForLog(value) {
+    if (value === undefined) return null;
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+        return String(value);
     }
 }
 
-// Inicializar verificação de conexão
-document.addEventListener('DOMContentLoaded', function() {
-    checkFirebaseConnection();
-});
+function formatLocalAuditDate(timestamp = Date.now()) {
+    const d = new Date(timestamp);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+async function writeAuditLog({ action, details = '', targetPath = '', entityType = '', entityId = '', before = null, after = null, extra = {} }) {
+    try {
+        const actor = getAuditUser();
+        const timestamp = Date.now();
+        const safeBefore = sanitizeForLog(before);
+        const safeAfter = sanitizeForLog(after);
+        const safeExtra = sanitizeForLog(extra);
+        const payload = {
+            user: actor.email,
+            uid: actor.uid,
+            action,
+            details,
+            entityType,
+            entityId,
+            targetPath,
+            before: safeBefore,
+            after: safeAfter,
+            extra: safeExtra,
+            timestamp,
+            date: formatLocalAuditDate(timestamp)
+        };
+        await db.ref('logs').push(payload);
+
+        if ((entityType === 'machine_change' || entityType === 'machine_prefix') && historicoRef) {
+            await historicoRef.push({
+                ...payload,
+                machineId: safeExtra?.machineId || entityId || '',
+                field: safeExtra?.field || '',
+                origem: safeExtra?.origem || 'sistema',
+                path: targetPath
+            });
+        }
+    } catch (error) {
+        console.error('❌ Erro ao registrar auditoria:', error);
+    }
+}
+
+async function updateWithAudit(path, updates, meta = {}) {
+    const ref = db.ref(path);
+    const beforeSnap = await ref.once('value');
+    const before = beforeSnap.val();
+    const after = { ...(before || {}), ...(updates || {}) };
+
+    await ref.update(updates);
+    await writeAuditLog({
+        action: meta.action || `atualizou ${path}`,
+        details: meta.details || '',
+        targetPath: path,
+        entityType: meta.entityType || '',
+        entityId: meta.entityId || '',
+        before,
+        after,
+        extra: meta.extra || {}
+    });
+    return true;
+}
+
+async function setWithAudit(path, value, meta = {}) {
+    const ref = db.ref(path);
+    const beforeSnap = await ref.once('value');
+    const before = beforeSnap.val();
+
+    await ref.set(value);
+    await writeAuditLog({
+        action: meta.action || `definiu ${path}`,
+        details: meta.details || '',
+        targetPath: path,
+        entityType: meta.entityType || '',
+        entityId: meta.entityId || '',
+        before,
+        after: value,
+        extra: meta.extra || {}
+    });
+    return true;
+}
+
+async function removeWithAudit(path, meta = {}) {
+    const ref = db.ref(path);
+    const beforeSnap = await ref.once('value');
+    const before = beforeSnap.val();
+
+    await ref.remove();
+    await writeAuditLog({
+        action: meta.action || `removeu ${path}`,
+        details: meta.details || '',
+        targetPath: path,
+        entityType: meta.entityType || '',
+        entityId: meta.entityId || '',
+        before,
+        after: null,
+        extra: meta.extra || {}
+    });
+    return true;
+}
 
 // Exportar para uso global
 window.db = db;
@@ -184,6 +429,11 @@ window.comentariosRef = comentariosRef;
 window.imagensRef = imagensRef;
 window.adminConfigRef = adminConfigRef;
 window.manutencaoRef = manutencaoRef;
+window.configuracoesRef = configuracoesRef;
+window.usersRef = usersRef;
+window.logsRef = logsRef;
+window.backupsRef = backupsRef;
+window.systemSettingsRef = systemSettingsRef;
 window.DEFAULT_LIMITS = DEFAULT_LIMITS;
 window.getLimitsForMachine = getLimitsForMachine;
 window.saveMachineLimits = saveMachineLimits;
@@ -191,3 +441,18 @@ window.setMachineMaintenance = setMachineMaintenance;
 window.getMachineMaintenanceStatus = getMachineMaintenanceStatus;
 
 console.log("✅ Firebase configurado e funções exportadas");
+
+
+window.normalizeRole = normalizeRole;
+window.normalizePrefixObject = normalizePrefixObject;
+window.buildPrefixList = buildPrefixList;
+window.findPrefixRecord = findPrefixRecord;
+window.getMachinePrefixDisplay = getMachinePrefixDisplay;
+window.getPrefixosFromFirebase = getPrefixosFromFirebase;
+window.getPrefixImageUrl = getPrefixImageUrl;
+window.formatPrefixFieldLabel = formatPrefixFieldLabel;
+window.getAuditUser = getAuditUser;
+window.writeAuditLog = writeAuditLog;
+window.updateWithAudit = updateWithAudit;
+window.setWithAudit = setWithAudit;
+window.removeWithAudit = removeWithAudit;
