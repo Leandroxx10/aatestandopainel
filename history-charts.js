@@ -1,5 +1,5 @@
 // ================= GRÁFICOS DE HISTÓRICO =================
-// V4 - Turnos, alternância linha/barra, scroll horizontal e séries ocultas por padrão.
+// V5 - Turnos responsivos, PDF, modal sem dados, linha fixa e Moldes/Blanks ativos.
 (function () {
   'use strict';
 
@@ -8,7 +8,7 @@
   let displayedData = [];
   let currentMachine = '';
   let currentDate = '';
-  let chartType = 'line';
+  const chartType = 'line';
 
   const CORES = {
     molde: '#2563eb',
@@ -17,10 +17,10 @@
     funil: '#6b7280'
   };
 
-  // Por solicitação: ao abrir, nenhuma série aparece. O usuário escolhe o que quer visualizar.
+  // Ao abrir, Moldes e Blanks já aparecem. Neck Rings e Funís ficam opcionais.
   let datasetVisibility = {
-    molde: false,
-    blank: false,
+    molde: true,
+    blank: true,
     neckring: false,
     funil: false
   };
@@ -243,7 +243,7 @@
     const periodContainer = document.querySelector('.period-selector, .period-options, .period-buttons');
     if (!periodContainer || document.querySelector('[data-period="shift1"]')) return;
 
-    const btnClass = periodContainer.querySelector('.period-btn') ? 'period-btn' : 'period-option period-btn';
+    const btnClass = 'period-btn period-option';
     const existing24 = periodContainer.querySelector('[data-period="24h"], [data-period="day"]');
     if (existing24 && !existing24.getAttribute('data-period')) existing24.setAttribute('data-period', '24h');
 
@@ -290,26 +290,32 @@
       });
     }
 
-    const generateBtn = document.querySelector('.btn-generate');
-    if (generateBtn) {
-      const novoBtn = generateBtn.cloneNode(true);
-      generateBtn.parentNode.replaceChild(novoBtn, generateBtn);
-      novoBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        carregarDados();
-      });
-    }
+    removerBotoesDesnecessarios();
+    inserirBotaoPdf();
+  }
 
-    const toggleBtn = document.getElementById('toggleChartBtn');
-    if (toggleBtn) {
-      const novoToggle = toggleBtn.cloneNode(true);
-      toggleBtn.parentNode.replaceChild(novoToggle, toggleBtn);
-      novoToggle.addEventListener('click', function (e) {
-        e.preventDefault();
-        toggleChartType();
+  function removerBotoesDesnecessarios() {
+    const selectors = ['.btn-generate', '#toggleChartBtn'];
+    selectors.forEach(selector => {
+      document.querySelectorAll(selector).forEach(btn => {
+        const wrapper = btn.closest('.history-action, .action-button-wrapper, .chart-action') || btn;
+        wrapper.style.display = 'none';
+        wrapper.setAttribute('aria-hidden', 'true');
       });
-      updateChartTypeButton();
-    }
+    });
+  }
+
+  function inserirBotaoPdf() {
+    if (document.getElementById('exportHistoryPdfBtn')) return;
+    const anchor = document.querySelector('.btn-generate') || document.getElementById('toggleChartBtn') || document.querySelector('.period-selector, .period-options, .period-buttons');
+    if (!anchor || !anchor.parentNode) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'exportHistoryPdfBtn';
+    btn.className = 'export-pdf-btn';
+    btn.innerHTML = '<i class="fas fa-file-pdf"></i> Exportar PDF';
+    btn.addEventListener('click', exportarPdfHistorico);
+    anchor.parentNode.appendChild(btn);
   }
 
   function updateChartTypeButton() {
@@ -321,8 +327,6 @@
   }
 
   function toggleChartType() {
-    chartType = chartType === 'line' ? 'bar' : 'line';
-    updateChartTypeButton();
     criarGrafico(displayedData.length ? displayedData : currentData);
   }
 
@@ -357,7 +361,7 @@
         criarGraficoVazio();
         atualizarTabela([]);
         atualizarInsights([]);
-        showAlert('info', 'Nenhum dado encontrado para este período');
+        abrirModalSemDados(machine, data, period);
       } else {
         criarGrafico(displayedData);
         atualizarTabela(displayedData);
@@ -589,6 +593,165 @@
     });
   }
 
+  function getPeriodoLabel(period) {
+    const labels = {
+      '24h': '24 horas',
+      'day': '24 horas',
+      'shift1': 'Turno 1 - 06:00 às 14:00',
+      'turno1': 'Turno 1 - 06:00 às 14:00',
+      'shift2': 'Turno 2 - 14:00 às 22:00',
+      'turno2': 'Turno 2 - 14:00 às 22:00',
+      'shift3': 'Turno 3 - 22:00 às 06:00',
+      'turno3': 'Turno 3 - 22:00 às 06:00',
+      'custom': 'Período personalizado'
+    };
+    return labels[period] || 'Período selecionado';
+  }
+
+  function abrirModalSemDados(machine, data, period) {
+    fecharModalSemDados();
+    const overlay = document.createElement('div');
+    overlay.className = 'history-empty-modal-overlay';
+    overlay.id = 'historyEmptyModalOverlay';
+    overlay.innerHTML = `
+      <div class="history-empty-modal" role="dialog" aria-modal="true" aria-labelledby="historyEmptyTitle">
+        <button type="button" class="history-empty-close" aria-label="Fechar">×</button>
+        <div class="history-empty-icon"><i class="fas fa-chart-line"></i></div>
+        <h3 id="historyEmptyTitle">Nenhum dado encontrado</h3>
+        <p>Não existe histórico salvo para <strong>Máquina ${machine}</strong> em <strong>${data}</strong> no período <strong>${getPeriodoLabel(period)}</strong>.</p>
+        <div class="history-empty-actions">
+          <button type="button" class="history-empty-ok">Entendi</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.history-empty-close')?.addEventListener('click', fecharModalSemDados);
+    overlay.querySelector('.history-empty-ok')?.addEventListener('click', fecharModalSemDados);
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) fecharModalSemDados();
+    });
+  }
+
+  function fecharModalSemDados() {
+    const existing = document.getElementById('historyEmptyModalOverlay');
+    if (existing) existing.remove();
+  }
+
+  function carregarScriptExterno(src) {
+    return new Promise((resolve, reject) => {
+      const exists = Array.from(document.scripts).find(script => script.src === src);
+      if (exists) {
+        if (exists.dataset.loaded === 'true') resolve();
+        else exists.addEventListener('load', resolve, { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.dataset.loaded = 'false';
+      script.onload = () => { script.dataset.loaded = 'true'; resolve(); };
+      script.onerror = () => reject(new Error('Não foi possível carregar a biblioteca de PDF.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  async function garantirJsPdf() {
+    if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
+    await carregarScriptExterno('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    return window.jspdf?.jsPDF;
+  }
+
+  async function exportarPdfHistorico() {
+    if (!displayedData.length) {
+      abrirModalSemDados(currentMachine || '-', currentDate || '-', getActivePeriod());
+      return;
+    }
+    const canvas = document.getElementById('historyChart');
+    if (!canvas) return;
+
+    const btn = document.getElementById('exportHistoryPdfBtn');
+    const original = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Gerando...';
+    }
+
+    try {
+      const jsPDF = await garantirJsPdf();
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 12;
+      const machine = document.getElementById('historyMachineSelect')?.value || currentMachine || '-';
+      const data = document.getElementById('historyDate')?.value || currentDate || '-';
+      const periodo = getPeriodoLabel(getActivePeriod());
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.text('Histórico de Equipamentos', margin, 14);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.text(`Máquina: ${machine}   Data: ${data}   Período: ${periodo}`, margin, 21);
+
+      const image = canvas.toDataURL('image/png', 1.0);
+      const imageWidth = pageWidth - margin * 2;
+      const imageHeight = Math.min(95, imageWidth * (canvas.height / Math.max(canvas.width, 1)));
+      doc.addImage(image, 'PNG', margin, 27, imageWidth, imageHeight);
+
+      let y = 27 + imageHeight + 10;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('Quantidade por horário', margin, y);
+      y += 7;
+
+      const activeColumns = [
+        ['molde', 'Moldes', 'molde'],
+        ['blank', 'Blanks', 'blank'],
+        ['neckring', 'Neck Rings', 'neck_ring'],
+        ['funil', 'Funís', 'funil']
+      ].filter(([key]) => datasetVisibility[key]);
+
+      const headers = ['Horário', ...activeColumns.map(col => col[1])];
+      const colWidth = (pageWidth - margin * 2) / headers.length;
+      const rowHeight = 7;
+
+      const drawHeader = () => {
+        doc.setFillColor(245, 247, 251);
+        doc.rect(margin, y - 5, pageWidth - margin * 2, rowHeight, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        headers.forEach((h, i) => doc.text(h, margin + i * colWidth + 2, y));
+        y += rowHeight;
+        doc.setFont('helvetica', 'normal');
+      };
+
+      drawHeader();
+      [...displayedData].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)).forEach(item => {
+        if (y > pageHeight - 12) {
+          doc.addPage('a4', 'landscape');
+          y = 16;
+          drawHeader();
+        }
+        const hora = item.data && item.data !== currentDate ? `${item.hora} (${item.data.slice(0, 5)})` : item.hora;
+        const values = [hora, ...activeColumns.map(([, , field]) => String(item[field] ?? 0))];
+        values.forEach((value, i) => doc.text(String(value), margin + i * colWidth + 2, y));
+        y += rowHeight;
+      });
+
+      const fileMachine = String(machine).replace(/[^a-z0-9_-]+/gi, '-');
+      const fileDate = String(data).replace(/\//g, '-');
+      doc.save(`historico-${fileMachine}-${fileDate}.pdf`);
+    } catch (error) {
+      console.error('Erro ao exportar PDF:', error);
+      showAlert('erro', error.message || 'Erro ao exportar PDF');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    }
+  }
+
   function mostrarLoading() {
     const container = document.querySelector('.chart-container');
     if (container) container.style.opacity = '0.6';
@@ -614,5 +777,6 @@
   };
 
   window.loadHistoryChart = carregarDados;
+  window.exportHistoryPdf = exportarPdfHistorico;
   window.toggleChartType = toggleChartType;
 })();
