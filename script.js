@@ -224,11 +224,15 @@ async function carregarPrefixos() {
 // ====================================================
 
 function inicializarFirebaseListeners() {
-    // Listener para dados das máquinas
+    // Listener em tempo real para dados das máquinas.
+    // Qualquer alteração feita em outra tela/usuário atualiza o dashboard sem precisar clicar em Atualizar.
     db.ref("maquinas").on("value", snapshot => {
         const dados = snapshot.val();
         if (dados) {
+            window.__wmoldesUltimoSnapshotMaquinas = dados;
+            window.__wmoldesUltimaMudancaMaquinas = Date.now();
             aplicarDadosMaquinas(dados);
+            agendarAtualizacaoTempoRealMaquinas(dados);
         }
     });
     
@@ -880,6 +884,55 @@ function aplicarDadosMaquinas(dados) {
     }
 
     return true;
+}
+
+
+// ====================================================
+// V19 - SINCRONIZAÇÃO EM TEMPO REAL DOS CARDS
+// ====================================================
+function encontrarBotaoAtualizarDashboard() {
+    const candidates = Array.from(document.querySelectorAll('button, a'));
+    return candidates.find(el => {
+        const text = (el.textContent || '').trim().toLowerCase();
+        const onclick = String(el.getAttribute('onclick') || '').toLowerCase();
+        const id = String(el.id || '').toLowerCase();
+        return onclick.includes('recarregardados') || text.includes('atualizar') || id.includes('atualizar') || id.includes('refresh');
+    });
+}
+
+function agendarAtualizacaoTempoRealMaquinas(dados) {
+    // Renderiza imediatamente com os dados recebidos pelo Firebase.
+    if (dados && typeof dados === 'object') {
+        dadosMaquinas = dados;
+    }
+
+    // Debounce curto para quando o Firebase envia vários eventos em sequência.
+    clearTimeout(window.__wmoldesRealtimeRefreshTimer);
+    window.__wmoldesRealtimeRefreshTimer = setTimeout(() => {
+        try {
+            const dadosAtuais = window.__wmoldesUltimoSnapshotMaquinas || dadosMaquinas;
+            if (dadosAtuais && typeof dadosAtuais === 'object') {
+                aplicarDadosMaquinas(dadosAtuais);
+            }
+
+            // Alguns layouts só atualizam contadores/carrossel por meio da rotina do botão Atualizar.
+            // Aqui disparamos essa rotina automaticamente, mas com trava para não criar loop.
+            if (!window.__wmoldesRealtimeClickingAtualizar) {
+                const btnAtualizar = encontrarBotaoAtualizarDashboard();
+                if (btnAtualizar) {
+                    window.__wmoldesRealtimeClickingAtualizar = true;
+                    btnAtualizar.click();
+                    setTimeout(() => {
+                        window.__wmoldesRealtimeClickingAtualizar = false;
+                    }, 900);
+                } else if (typeof window.recarregarDados === 'function') {
+                    window.recarregarDados(true);
+                }
+            }
+        } catch (error) {
+            console.warn('Não foi possível atualizar os cards em tempo real:', error);
+        }
+    }, 250);
 }
 
 function recarregarDados(silent = false) {
@@ -1760,3 +1813,12 @@ console.log("✅ Script principal carregado");
         });
     }
 })();
+
+
+// V19 - Exposição segura para rotinas automáticas e botões inline
+try {
+    window.recarregarDados = recarregarDados;
+    window.aplicarDadosMaquinas = aplicarDadosMaquinas;
+} catch (error) {
+    console.warn('Não foi possível expor funções de atualização:', error);
+}
