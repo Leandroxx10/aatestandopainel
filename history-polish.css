@@ -1,6 +1,7 @@
 /* ==========================================================
-   WMoldes - Histórico Admin | Acabamento V7
-   Estiliza Exportar PDF e Tutorial no mesmo padrão do período
+   WMoldes - Histórico Admin | Acabamento V11
+   Botões Tutorial / Exportar PDF no topo do card de filtros,
+   no mesmo padrão visual do seletor de período.
    ========================================================== */
 
 :root {
@@ -13,83 +14,124 @@
   --history-shadow: 0 16px 42px rgba(15, 23, 42, .08);
 }
 
-.history-action-row,
-.hc-action-row,
-.history-actions,
-.history-export-actions {
-  display: flex !important;
-  align-items: stretch !important;
-  justify-content: flex-end !important;
-  gap: 12px !important;
-  flex-wrap: wrap !important;
-  min-width: 0 !important;
+/* Card de filtros com espaço reservado no topo esquerdo */
+.history-filter-card-with-actions {
+  position: relative !important;
+  padding-top: clamp(176px, 18vw, 218px) !important;
+  overflow: visible !important;
 }
 
-.history-period-grid,
-.hc-period-grid,
-.history-filter-grid {
-  display: grid !important;
-  grid-template-columns: minmax(220px, 1.15fr) minmax(220px, 1fr) minmax(300px, 1.25fr) auto !important;
-  gap: 24px !important;
-  align-items: end !important;
+.history-top-action-row,
+#historyActionRow {
+  position: absolute !important;
+  top: 28px !important;
+  left: clamp(24px, 3.2vw, 52px) !important;
+  right: clamp(440px, 36vw, 560px) !important;
+  min-height: 128px !important;
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  gap: 16px !important;
+  flex-wrap: wrap !important;
+  z-index: 5 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  pointer-events: auto !important;
 }
 
 .history-btn,
-.hc-btn,
-.history-export-pdf-btn,
-.history-tutorial-btn,
-#exportHistoryPdfBtn,
 #historyTutorialBtn,
-button[data-history-action="export-pdf"],
-button[data-history-action="tutorial"] {
-  min-height: 54px !important;
+#exportHistoryPdfBtn,
+button[data-history-action="tutorial"],
+button[data-history-action="export-pdf"] {
+  min-height: 74px !important;
+  min-width: 220px !important;
   border: 1px solid rgba(226,232,240,.95) !important;
-  border-radius: 14px !important;
-  padding: 0 20px !important;
+  border-radius: 18px !important;
+  padding: 14px 18px !important;
   display: inline-flex !important;
   align-items: center !important;
-  justify-content: center !important;
-  gap: 10px !important;
+  justify-content: flex-start !important;
+  gap: 14px !important;
   font-weight: 800 !important;
   letter-spacing: .01em !important;
   cursor: pointer !important;
   transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease !important;
   white-space: nowrap !important;
-  box-shadow: 0 8px 24px rgba(15,23,42,.06) !important;
+  box-shadow: 0 12px 30px rgba(15,23,42,.08) !important;
+  text-decoration: none !important;
 }
 
-.history-export-pdf-btn,
+.history-action-icon {
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 16px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 0 0 auto !important;
+  font-size: 1.1rem !important;
+}
+
+.history-action-text {
+  display: grid !important;
+  gap: 2px !important;
+  line-height: 1.15 !important;
+  text-align: left !important;
+}
+
+.history-action-text strong {
+  font-size: .98rem !important;
+}
+
+.history-action-text small {
+  font-size: .78rem !important;
+  font-weight: 700 !important;
+  opacity: .78 !important;
+}
+
 #exportHistoryPdfBtn,
+.history-export-pdf-btn,
 button[data-history-action="export-pdf"] {
   background: linear-gradient(135deg, var(--history-primary), #1d4ed8) !important;
   color: #fff !important;
   border-color: transparent !important;
 }
 
-.history-tutorial-btn,
+#exportHistoryPdfBtn .history-action-icon,
+.history-export-pdf-btn .history-action-icon {
+  background: rgba(255,255,255,.16) !important;
+  color: #fff !important;
+}
+
 #historyTutorialBtn,
+.history-tutorial-btn,
 button[data-history-action="tutorial"] {
   background: rgba(255,255,255,.96) !important;
   color: var(--history-text) !important;
 }
 
+#historyTutorialBtn .history-action-icon,
+.history-tutorial-btn .history-action-icon {
+  background: #dbeafe !important;
+  color: var(--history-primary) !important;
+}
+
 .history-btn:hover,
-.hc-btn:hover,
-.history-export-pdf-btn:hover,
-.history-tutorial-btn:hover,
 #exportHistoryPdfBtn:hover,
 #historyTutorialBtn:hover,
 button[data-history-action="export-pdf"]:hover,
 button[data-history-action="tutorial"]:hover {
   transform: translateY(-2px) !important;
-  box-shadow: 0 14px 34px rgba(37,99,235,.18) !important;
+  box-shadow: 0 18px 38px rgba(37,99,235,.18) !important;
 }
 
-.history-btn i,
-.hc-btn i,
-#exportHistoryPdfBtn i,
-#historyTutorialBtn i {
-  font-size: 1rem !important;
+/* Segurança: remove controles desativados */
+#toggleChartBtn,
+.btn-generate,
+button[data-history-action="bar"],
+button[data-history-action="analysis"] {
+  display: none !important;
 }
 
 /* Estado sem dados dentro do gráfico */
@@ -173,52 +215,48 @@ button[data-history-action="tutorial"]:hover {
   max-width: 360px;
 }
 
-/* Responsividade */
+/* Tablet: botões continuam no topo, sem passar por cima do período */
 @media (max-width: 1180px) {
-  .history-period-grid,
-  .hc-period-grid,
-  .history-filter-grid {
-    grid-template-columns: repeat(2, minmax(220px, 1fr)) !important;
+  .history-filter-card-with-actions {
+    padding-top: 190px !important;
   }
-  .history-action-row,
-  .hc-action-row,
-  .history-actions,
-  .history-export-actions {
-    justify-content: flex-start !important;
+
+  .history-top-action-row,
+  #historyActionRow {
+    right: 28px !important;
+    min-height: 118px !important;
   }
 }
 
+/* Mobile: botões viram linha normal acima dos filtros */
 @media (max-width: 760px) {
-  .history-period-grid,
-  .hc-period-grid,
-  .history-filter-grid {
-    grid-template-columns: 1fr !important;
-    gap: 16px !important;
+  .history-filter-card-with-actions {
+    padding-top: 0 !important;
   }
 
-  .history-action-row,
-  .hc-action-row,
-  .history-actions,
-  .history-export-actions {
+  .history-top-action-row,
+  #historyActionRow {
+    position: static !important;
     width: 100% !important;
+    min-height: 0 !important;
     display: grid !important;
     grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    margin-bottom: 18px !important;
   }
 
   .history-btn,
-  .hc-btn,
-  .history-export-pdf-btn,
-  .history-tutorial-btn,
-  #exportHistoryPdfBtn,
   #historyTutorialBtn,
-  button[data-history-action="export-pdf"],
-  button[data-history-action="tutorial"] {
+  #exportHistoryPdfBtn,
+  button[data-history-action="tutorial"],
+  button[data-history-action="export-pdf"] {
     width: 100% !important;
+    min-width: 0 !important;
   }
 }
 
-body.dark-mode .history-tutorial-btn,
 body.dark-mode #historyTutorialBtn,
+body.dark-mode .history-tutorial-btn,
 body.dark-mode button[data-history-action="tutorial"],
 body.dark-mode .history-empty-card,
 body.dark-mode .hc-empty-card {
