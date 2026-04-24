@@ -1,27 +1,32 @@
 /* ==========================================================
-   WMoldes - Histórico Admin | Integração V7
-   - Abre tutorial em historico-tutorial.html
-   - Padroniza botões Exportar PDF e Tutorial
-   - Garante estado visual profissional quando não houver dados
+   WMoldes - Histórico Admin | Integração V10
+   - Botões Tutorial e Exportar PDF fixados no topo esquerdo
+     do card de filtros do Histórico
+   - Mantém o visual do filtro de período
+   - Garante ilustração profissional quando não houver dados
    ========================================================== */
 (function () {
   const READY_DELAY = 450;
+  const LOOP_DELAY = 1800;
 
   function byText(selector, text) {
     const target = String(text || '').toLowerCase();
     return Array.from(document.querySelectorAll(selector)).find(el => (el.textContent || '').toLowerCase().includes(target));
   }
 
-  function makeButton(id, className, icon, label, action) {
+  function makeButton(id, className, icon, title, subtitle, action) {
     let btn = document.getElementById(id);
     if (!btn) {
       btn = document.createElement('button');
       btn.id = id;
       btn.type = 'button';
       btn.dataset.historyAction = action;
-      btn.innerHTML = `<i class="${icon}"></i><span>${label}</span>`;
     }
     btn.className = className;
+    btn.innerHTML = `
+      <span class="history-action-icon"><i class="${icon}"></i></span>
+      <span class="history-action-text"><strong>${title}</strong><small>${subtitle}</small></span>
+    `;
     return btn;
   }
 
@@ -35,6 +40,43 @@
     alert('Exportação PDF indisponível. Verifique se history-charts.js está carregado antes de history-polish.js.');
   }
 
+  function getHistoryFilterCard() {
+    const machineLabel = byText('label, h3, h4, .form-label, .filter-label, .history-filter-label, div, span', 'máquina') || byText('label, h3, h4, .form-label, .filter-label, .history-filter-label, div, span', 'maquina');
+    const periodLabel = byText('label, h3, h4, .form-label, .filter-label, .history-filter-label, div, span', 'período') || byText('label, h3, h4, .form-label, .filter-label, .history-filter-label, div, span', 'periodo');
+
+    const candidates = [
+      '.history-filter-card',
+      '.history-filters-card',
+      '.history-controls-card',
+      '.history-controls',
+      '.history-filters',
+      '.admin-card',
+      'section',
+      'div'
+    ];
+
+    const machineAncestors = machineLabel ? getAncestors(machineLabel) : [];
+    const periodAncestors = periodLabel ? getAncestors(periodLabel) : [];
+    const common = machineAncestors.find(node => periodAncestors.includes(node));
+    if (common && common !== document.body && common !== document.documentElement) return common;
+
+    for (const selector of candidates) {
+      const node = document.querySelector(selector);
+      if (node) return node;
+    }
+    return document.body;
+  }
+
+  function getAncestors(node) {
+    const list = [];
+    let current = node;
+    while (current) {
+      list.push(current);
+      current = current.parentElement;
+    }
+    return list;
+  }
+
   function normalizeActionButtons() {
     // Remove botões que ficaram de versões anteriores e não devem mais existir.
     Array.from(document.querySelectorAll('button')).forEach(btn => {
@@ -42,20 +84,37 @@
       if (txt === 'barras' || txt.includes('gerar análise') || txt.includes('gerar analise')) btn.remove();
     });
 
-    const periodLabel = byText('label, h3, h4, .form-label, .filter-label, .history-filter-label, div, span', 'período');
-    const periodContainer = periodLabel ? (periodLabel.closest('.form-group, .filter-group, .history-filter-group, .history-period-card, .admin-card, section, div') || periodLabel.parentElement) : null;
-    const host = periodContainer?.parentElement || document.querySelector('.history-controls, .history-filters, .admin-card') || document.body;
+    const card = getHistoryFilterCard();
+    if (!card) return;
+
+    if (card !== document.body && getComputedStyle(card).position === 'static') {
+      card.style.position = 'relative';
+    }
+    if (card !== document.body) card.classList.add('history-controls-has-top-actions');
 
     let row = document.getElementById('historyActionRow');
     if (!row) {
       row = document.createElement('div');
       row.id = 'historyActionRow';
-      row.className = 'history-action-row';
-      host.appendChild(row);
     }
+    row.className = 'history-action-row history-top-action-row';
 
-    const tutorialBtn = makeButton('historyTutorialBtn', 'history-btn history-tutorial-btn', 'fas fa-graduation-cap', 'Tutorial', 'tutorial');
-    const pdfBtn = makeButton('exportHistoryPdfBtn', 'history-btn history-export-pdf-btn', 'fas fa-file-pdf', 'Exportar PDF', 'export-pdf');
+    const tutorialBtn = makeButton(
+      'historyTutorialBtn',
+      'history-btn history-tutorial-btn',
+      'fas fa-graduation-cap',
+      'Tutorial',
+      'Como usar o histórico',
+      'tutorial'
+    );
+    const pdfBtn = makeButton(
+      'exportHistoryPdfBtn',
+      'history-btn history-export-pdf-btn',
+      'fas fa-file-pdf',
+      'Exportar PDF',
+      'Gráfico + tabela',
+      'export-pdf'
+    );
 
     tutorialBtn.onclick = openTutorial;
     pdfBtn.onclick = exportPdfFallback;
@@ -64,8 +123,9 @@
     row.appendChild(tutorialBtn);
     row.appendChild(pdfBtn);
 
-    // Tenta aplicar grade responsiva no contêiner de filtros.
-    if (host && host !== document.body) host.classList.add('history-period-grid');
+    if (row.parentElement !== card) {
+      card.insertBefore(row, card.firstChild);
+    }
   }
 
   function ensureEmptyState() {
@@ -75,9 +135,8 @@
 
     if (getComputedStyle(chartBox).position === 'static') chartBox.style.position = 'relative';
 
-    const plainEmpty = byText('*', 'Nenhum dado encontrado para o período');
+    const plainEmpty = byText('*', 'Nenhum dado encontrado para o período') || byText('*', 'Nenhum dado encontrado para o periodo');
     const hasVisibleEmptyText = plainEmpty && plainEmpty.offsetParent !== null;
-    const dataLabels = document.querySelectorAll('.chartjs-render-monitor, canvas');
 
     let empty = document.getElementById('historyEmptyState');
     if (!empty) {
@@ -102,7 +161,7 @@
     setInterval(() => {
       normalizeActionButtons();
       ensureEmptyState();
-    }, 1800);
+    }, LOOP_DELAY);
   }
 
   if (document.readyState === 'loading') {
