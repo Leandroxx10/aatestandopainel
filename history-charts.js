@@ -308,29 +308,11 @@
 
 
   function inserirBotaoTutorial() {
-    if (document.getElementById('historyTutorialBtn')) return;
-    const anchor = document.querySelector('.btn-generate') || document.getElementById('toggleChartBtn') || document.querySelector('.period-selector, .period-options, .period-buttons');
-    if (!anchor || !anchor.parentNode) return;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.id = 'historyTutorialBtn';
-    btn.className = 'history-tutorial-btn history-premium-action';
-    btn.innerHTML = '<span class="history-action-icon"><i class="fas fa-route"></i></span><span><strong>Tutorial</strong><small>Aprenda o gráfico</small></span>';
-    btn.addEventListener('click', abrirTutorialHistorico);
-    anchor.parentNode.appendChild(btn);
+    // V12: desativado para evitar criação no gráfico.
   }
 
   function inserirBotaoPdf() {
-    if (document.getElementById('exportHistoryPdfBtn')) return;
-    const anchor = document.querySelector('.btn-generate') || document.getElementById('toggleChartBtn') || document.querySelector('.period-selector, .period-options, .period-buttons');
-    if (!anchor || !anchor.parentNode) return;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.id = 'exportHistoryPdfBtn';
-    btn.className = 'export-pdf-btn history-premium-action';
-    btn.innerHTML = '<span class="history-action-icon"><i class="fas fa-file-pdf"></i></span><span><strong>Exportar PDF</strong><small>Gráfico + tabela</small></span>';
-    btn.addEventListener('click', exportarPdfHistorico);
-    anchor.parentNode.appendChild(btn);
+    // V12: desativado para evitar criação no gráfico.
   }
 
   function updateChartTypeButton() {
