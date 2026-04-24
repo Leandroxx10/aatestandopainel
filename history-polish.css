@@ -1,0 +1,226 @@
+/* ==========================================================
+   WMoldes - Histórico Admin | Acabamento V7
+   Estiliza Exportar PDF e Tutorial no mesmo padrão do período
+   ========================================================== */
+
+:root {
+  --history-primary: var(--primary, #2563eb);
+  --history-card: var(--card, #ffffff);
+  --history-bg: var(--bg, #f8fafc);
+  --history-text: var(--text, #0f172a);
+  --history-muted: #64748b;
+  --history-border: var(--border, #e2e8f0);
+  --history-shadow: 0 16px 42px rgba(15, 23, 42, .08);
+}
+
+.history-action-row,
+.hc-action-row,
+.history-actions,
+.history-export-actions {
+  display: flex !important;
+  align-items: stretch !important;
+  justify-content: flex-end !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+  min-width: 0 !important;
+}
+
+.history-period-grid,
+.hc-period-grid,
+.history-filter-grid {
+  display: grid !important;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(220px, 1fr) minmax(300px, 1.25fr) auto !important;
+  gap: 24px !important;
+  align-items: end !important;
+}
+
+.history-btn,
+.hc-btn,
+.history-export-pdf-btn,
+.history-tutorial-btn,
+#exportHistoryPdfBtn,
+#historyTutorialBtn,
+button[data-history-action="export-pdf"],
+button[data-history-action="tutorial"] {
+  min-height: 54px !important;
+  border: 1px solid rgba(226,232,240,.95) !important;
+  border-radius: 14px !important;
+  padding: 0 20px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: .01em !important;
+  cursor: pointer !important;
+  transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease !important;
+  white-space: nowrap !important;
+  box-shadow: 0 8px 24px rgba(15,23,42,.06) !important;
+}
+
+.history-export-pdf-btn,
+#exportHistoryPdfBtn,
+button[data-history-action="export-pdf"] {
+  background: linear-gradient(135deg, var(--history-primary), #1d4ed8) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+}
+
+.history-tutorial-btn,
+#historyTutorialBtn,
+button[data-history-action="tutorial"] {
+  background: rgba(255,255,255,.96) !important;
+  color: var(--history-text) !important;
+}
+
+.history-btn:hover,
+.hc-btn:hover,
+.history-export-pdf-btn:hover,
+.history-tutorial-btn:hover,
+#exportHistoryPdfBtn:hover,
+#historyTutorialBtn:hover,
+button[data-history-action="export-pdf"]:hover,
+button[data-history-action="tutorial"]:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 14px 34px rgba(37,99,235,.18) !important;
+}
+
+.history-btn i,
+.hc-btn i,
+#exportHistoryPdfBtn i,
+#historyTutorialBtn i {
+  font-size: 1rem !important;
+}
+
+/* Estado sem dados dentro do gráfico */
+.history-empty-state,
+.hc-empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  padding: 28px;
+  z-index: 2;
+}
+
+.history-empty-card,
+.hc-empty-card {
+  width: min(460px, 92%);
+  background: rgba(255,255,255,.94);
+  border: 1px solid rgba(226,232,240,.95);
+  border-radius: 26px;
+  padding: 28px;
+  text-align: center;
+  box-shadow: var(--history-shadow);
+  backdrop-filter: blur(12px);
+}
+
+.history-empty-illustration,
+.hc-empty-illustration {
+  width: 132px;
+  height: 132px;
+  margin: 0 auto 14px;
+  position: relative;
+  border-radius: 32px;
+  background: linear-gradient(135deg, #eff6ff, #f8fafc);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.history-empty-illustration::before,
+.hc-empty-illustration::before {
+  content: "";
+  width: 78px;
+  height: 50px;
+  border-left: 6px solid #2563eb;
+  border-bottom: 6px solid #2563eb;
+  border-radius: 8px;
+  opacity: .92;
+}
+
+.history-empty-illustration::after,
+.hc-empty-illustration::after {
+  content: "";
+  position: absolute;
+  width: 108px;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, #2563eb, transparent);
+  transform: rotate(-18deg);
+  animation: historyScan 1.7s ease-in-out infinite;
+}
+
+@keyframes historyScan {
+  0%, 100% { transform: translateY(-28px) rotate(-18deg); opacity: .25; }
+  50% { transform: translateY(28px) rotate(-18deg); opacity: 1; }
+}
+
+.history-empty-card h3,
+.hc-empty-card h3 {
+  margin: 8px 0 8px !important;
+  font-size: 1.1rem !important;
+  color: var(--history-text) !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+
+.history-empty-card p,
+.hc-empty-card p {
+  margin: 0 auto !important;
+  color: var(--history-muted) !important;
+  max-width: 360px;
+}
+
+/* Responsividade */
+@media (max-width: 1180px) {
+  .history-period-grid,
+  .hc-period-grid,
+  .history-filter-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr)) !important;
+  }
+  .history-action-row,
+  .hc-action-row,
+  .history-actions,
+  .history-export-actions {
+    justify-content: flex-start !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .history-period-grid,
+  .hc-period-grid,
+  .history-filter-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .history-action-row,
+  .hc-action-row,
+  .history-actions,
+  .history-export-actions {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .history-btn,
+  .hc-btn,
+  .history-export-pdf-btn,
+  .history-tutorial-btn,
+  #exportHistoryPdfBtn,
+  #historyTutorialBtn,
+  button[data-history-action="export-pdf"],
+  button[data-history-action="tutorial"] {
+    width: 100% !important;
+  }
+}
+
+body.dark-mode .history-tutorial-btn,
+body.dark-mode #historyTutorialBtn,
+body.dark-mode button[data-history-action="tutorial"],
+body.dark-mode .history-empty-card,
+body.dark-mode .hc-empty-card {
+  background: rgba(30,41,59,.94) !important;
+}
