@@ -1822,3 +1822,146 @@ try {
 } catch (error) {
     console.warn('Não foi possível expor funções de atualização:', error);
 }
+
+// ====================================================
+// V20 - SINCRONIZAÇÃO REAL COM O BANCO DE DADOS
+// ====================================================
+// Este bloco garante que alterações feitas por outro site diretamente no
+// Firebase Realtime Database sejam refletidas no painel sem clicar em Atualizar.
+// Usa listeners em /maquinas e, como redundância, uma verificação curta por
+// polling enquanto a página está aberta.
+(function setupSincronizacaoBancoTempoRealV20() {
+    if (window.__wmoldesRealtimeDBV20Started) return;
+    window.__wmoldesRealtimeDBV20Started = true;
+
+    let lastSignature = '';
+    let isRefreshing = false;
+    let debounceTimer = null;
+
+    function assinatura(dados) {
+        try {
+            return JSON.stringify(dados || {});
+        } catch (error) {
+            return String(Date.now());
+        }
+    }
+
+    async function atualizarDoBanco(origem = 'tempo-real') {
+        if (isRefreshing) return false;
+        if (typeof db === 'undefined' || !db) return false;
+
+        isRefreshing = true;
+        try {
+            const snapshot = await db.ref('maquinas').once('value');
+            const dados = snapshot.val() || {};
+            const sig = assinatura(dados);
+
+            if (sig !== lastSignature || origem === 'forcar') {
+                lastSignature = sig;
+                window.__wmoldesUltimoSnapshotMaquinas = dados;
+                dadosMaquinas = dados;
+
+                if (typeof aplicarDadosMaquinas === 'function') {
+                    aplicarDadosMaquinas(dados);
+                } else if (typeof criarPainel === 'function') {
+                    criarPainel(dados);
+                }
+
+                if (typeof atualizarEstatisticasDashboard === 'function') {
+                    try { atualizarEstatisticasDashboard(dados); } catch (_) {}
+                }
+
+                const ultimaAtualizacao = document.getElementById('ultimaAtualizacao');
+                if (ultimaAtualizacao) {
+                    ultimaAtualizacao.textContent = new Date().toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    });
+                }
+            }
+
+            return true;
+        } catch (error) {
+            console.warn('V20: não foi possível sincronizar máquinas em tempo real:', origem, error);
+            return false;
+        } finally {
+            isRefreshing = false;
+        }
+    }
+
+    function agendarAtualizacao(origem) {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => atualizarDoBanco(origem), 120);
+    }
+
+    function iniciarListeners() {
+        if (typeof db === 'undefined' || !db) {
+            setTimeout(iniciarListeners, 400);
+            return;
+        }
+
+        if (window.__wmoldesRealtimeDBV20ListenersAttached) return;
+        window.__wmoldesRealtimeDBV20ListenersAttached = true;
+
+        const ref = db.ref('maquinas');
+
+        ref.on('value', snapshot => {
+            const dados = snapshot.val() || {};
+            const sig = assinatura(dados);
+            if (sig !== lastSignature) {
+                lastSignature = sig;
+                window.__wmoldesUltimoSnapshotMaquinas = dados;
+                dadosMaquinas = dados;
+                if (typeof aplicarDadosMaquinas === 'function') {
+                    aplicarDadosMaquinas(dados);
+                } else if (typeof criarPainel === 'function') {
+                    criarPainel(dados);
+                }
+            }
+        }, error => {
+            console.warn('V20: listener /maquinas/value falhou:', error);
+        });
+
+        ref.on('child_added', () => agendarAtualizacao('child_added'));
+        ref.on('child_changed', () => agendarAtualizacao('child_changed'));
+        ref.on('child_removed', () => agendarAtualizacao('child_removed'));
+
+        // Primeira sincronização imediata.
+        atualizarDoBanco('forcar');
+    }
+
+    function iniciarPollingRedundante() {
+        if (window.__wmoldesRealtimeDBV20Polling) return;
+        window.__wmoldesRealtimeDBV20Polling = setInterval(() => {
+            if (!document.hidden) atualizarDoBanco('polling');
+        }, 2500);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            iniciarListeners();
+            iniciarPollingRedundante();
+        }, { once: true });
+    } else {
+        iniciarListeners();
+        iniciarPollingRedundante();
+    }
+
+    window.addEventListener('focus', () => atualizarDoBanco('forcar'));
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) atualizarDoBanco('forcar');
+    });
+
+    if (typeof auth !== 'undefined' && auth && typeof auth.onAuthStateChanged === 'function') {
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                iniciarListeners();
+                atualizarDoBanco('auth');
+            }
+        });
+    }
+
+    // Deixa disponível para teste no console: window.sincronizarMaquinasAgora()
+    window.sincronizarMaquinasAgora = () => atualizarDoBanco('forcar');
+})();
