@@ -1647,3 +1647,116 @@ window.atualizarPorInput = atualizarPorInput;
 window.mostrarNotificacao = mostrarNotificacao;
 
 console.log("✅ Script principal carregado");
+
+
+// ====================================================
+// V18 - CARREGAMENTO AUTOMÁTICO REAL NA ABERTURA
+// ====================================================
+// Algumas versões do dashboard só renderizam os cartões depois que o botão
+// "Atualizar" executa a rotina completa de refresh. Esta camada replica esse
+// comportamento automaticamente na abertura, sem depender de clique manual.
+(function setupAutoRefreshOnPageOpen() {
+    if (window.__wmoldesAutoRefreshV18Started) return;
+    window.__wmoldesAutoRefreshV18Started = true;
+
+    function getMachineCardCount() {
+        const selectors = [
+            '#painel .maquina-card',
+            '#painel .machine-card',
+            '#painel .card-maquina',
+            '.maquinas-grid .maquina-card',
+            '.maquinas-grid .machine-card',
+            '.maquinas-grid .card-maquina',
+            '[data-machine-id]',
+            '[data-maquina-id]'
+        ];
+
+        for (const selector of selectors) {
+            const count = document.querySelectorAll(selector).length;
+            if (count > 0) return count;
+        }
+
+        const painel = document.getElementById('painel') || document.querySelector('.maquinas-grid');
+        if (painel && painel.children && painel.children.length > 0) return painel.children.length;
+
+        return 0;
+    }
+
+    function findUpdateButton() {
+        const candidates = Array.from(document.querySelectorAll('button, a'));
+        return candidates.find(el => {
+            const text = (el.textContent || '').trim().toLowerCase();
+            const onclick = String(el.getAttribute('onclick') || '').toLowerCase();
+            const id = String(el.id || '').toLowerCase();
+            return onclick.includes('recarregardados') || text.includes('atualizar') || id.includes('atualizar') || id.includes('refresh');
+        });
+    }
+
+    async function runRefreshAttempt(source) {
+        try {
+            if (getMachineCardCount() > 0) {
+                window.__wmoldesAutoRefreshV18Done = true;
+                return true;
+            }
+
+            if (typeof window.recarregarDados === 'function') {
+                const result = await window.recarregarDados(true);
+                if (result || getMachineCardCount() > 0) {
+                    window.__wmoldesAutoRefreshV18Done = true;
+                    return true;
+                }
+            }
+
+            // Fallback: executa exatamente a mesma ação do botão que funciona manualmente.
+            const updateButton = findUpdateButton();
+            if (updateButton && !window.__wmoldesAutoRefreshV18Clicking) {
+                window.__wmoldesAutoRefreshV18Clicking = true;
+                updateButton.click();
+                setTimeout(() => { window.__wmoldesAutoRefreshV18Clicking = false; }, 700);
+            }
+
+            setTimeout(() => {
+                if (getMachineCardCount() > 0) {
+                    window.__wmoldesAutoRefreshV18Done = true;
+                }
+            }, 500);
+
+            return getMachineCardCount() > 0;
+        } catch (error) {
+            console.warn('Auto refresh V18 não conseguiu carregar nesta tentativa:', source, error);
+            return false;
+        }
+    }
+
+    function scheduleAttempts() {
+        const delays = [150, 500, 1000, 1800, 3000, 5000, 8000, 12000, 18000];
+        delays.forEach(delay => {
+            setTimeout(() => {
+                if (!window.__wmoldesAutoRefreshV18Done) {
+                    runRefreshAttempt(`delay-${delay}`);
+                }
+            }, delay);
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scheduleAttempts, { once: true });
+    } else {
+        scheduleAttempts();
+    }
+
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            if (!window.__wmoldesAutoRefreshV18Done) runRefreshAttempt('window-load');
+        }, 300);
+    });
+
+    if (typeof auth !== 'undefined' && auth && typeof auth.onAuthStateChanged === 'function') {
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                setTimeout(() => runRefreshAttempt('auth-ready'), 300);
+                setTimeout(() => runRefreshAttempt('auth-ready-late'), 1500);
+            }
+        });
+    }
+})();
