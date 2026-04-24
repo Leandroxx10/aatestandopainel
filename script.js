@@ -883,36 +883,86 @@ function aplicarDadosMaquinas(dados) {
 }
 
 function recarregarDados(silent = false) {
+    if (typeof db === 'undefined' || !db) {
+        console.warn("Firebase Database ainda não está disponível para carregar máquinas.");
+        return Promise.resolve(false);
+    }
+
     return db.ref("maquinas").once("value").then(snapshot => {
         const dados = snapshot.val();
-        if (aplicarDadosMaquinas(dados)) {
+        const carregou = aplicarDadosMaquinas(dados);
+
+        if (carregou) {
+            window.__wmoldesMaquinasCarregadas = true;
+            window.__wmoldesUltimoCarregamentoMaquinas = Date.now();
             if (!silent) {
                 mostrarNotificacao("Dados atualizados com sucesso!", "info");
             }
-        } else if (!silent) {
+            return true;
+        }
+
+        if (!silent) {
             mostrarNotificacao("Nenhuma máquina encontrada no Firebase.", "warning");
         }
+        return false;
     }).catch(error => {
         console.error("❌ Erro ao recarregar máquinas:", error);
         if (!silent) {
             mostrarNotificacao("Erro ao carregar máquinas do Firebase.", "error");
         }
+        return false;
     });
 }
 
 function inicializarCarregamentoAutomaticoMaquinas() {
-    // Primeiro carregamento imediato: resolve o caso em que os listeners ainda não renderizaram na abertura.
-    setTimeout(() => recarregarDados(true), 250);
-    setTimeout(() => {
-        if (!dadosMaquinas || Object.keys(dadosMaquinas).length === 0) {
-            recarregarDados(true);
+    // Carregamento resiliente de abertura.
+    // O botão Atualizar funcionava porque era acionado depois da tela estabilizar;
+    // esta rotina faz tentativas automáticas curtas até o Firebase devolver as máquinas.
+    if (window.__wmoldesAutoLoadStarted) return;
+    window.__wmoldesAutoLoadStarted = true;
+
+    let tentativas = 0;
+    const maxTentativas = 24; // aproximadamente 12 segundos
+
+    const tentarCarregar = () => {
+        tentativas += 1;
+
+        recarregarDados(true).then(carregou => {
+            const total = dadosMaquinas && typeof dadosMaquinas === 'object' ? Object.keys(dadosMaquinas).length : 0;
+
+            if (carregou || total > 0) {
+                window.__wmoldesMaquinasCarregadas = true;
+                return;
+            }
+
+            if (tentativas < maxTentativas) {
+                setTimeout(tentarCarregar, 500);
+            }
+        });
+    };
+
+    // Dispara em vários momentos seguros da abertura.
+    tentarCarregar();
+    setTimeout(tentarCarregar, 300);
+    window.addEventListener('load', () => setTimeout(tentarCarregar, 100));
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !window.__wmoldesMaquinasCarregadas) {
+            tentarCarregar();
         }
-    }, 1500);
+    });
+
+    if (typeof auth !== 'undefined' && auth && typeof auth.onAuthStateChanged === 'function') {
+        auth.onAuthStateChanged(user => {
+            if (user && !window.__wmoldesMaquinasCarregadas) {
+                tentarCarregar();
+            }
+        });
+    }
 
     // Atualização periódica leve quando a opção do sistema estiver ativa.
     if (!window.__wmoldesAutoReloadInterval) {
         window.__wmoldesAutoReloadInterval = setInterval(() => {
-            if (config.autoAtualizar !== false && auth && auth.currentUser) {
+            if (config.autoAtualizar !== false && typeof auth !== 'undefined' && auth && auth.currentUser) {
                 recarregarDados(true);
             }
         }, 30000);
