@@ -1,5 +1,5 @@
 // ================= GRÁFICOS DE HISTÓRICO =================
-// V6 - Exportação premium, empty state animado e tutorial onboarding do gráfico.
+// V14 - Ordenação cronológica corrigida por data/hora real do registro.
 (function () {
   'use strict';
 
@@ -92,6 +92,34 @@
     return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
   }
 
+
+  function getChronologicalOrder(record, period = getActivePeriod()) {
+    const minutes = (Number(record.horaNum) || 0) * 60 + (Number(record.minutoNum) || 0);
+    const range = getPeriodRange(period);
+    const startMinutes = toMinutes(range.start);
+    const endMinutes = toMinutes(range.end);
+    const recordDate = record.data || record.dataISO || '';
+    const nextBR = addDays(currentDate, 1);
+    const nextISO = getDateISOFromBR(nextBR);
+
+    // Em períodos que atravessam meia-noite, o dia seguinte entra depois de 24:00.
+    if (startMinutes > endMinutes) {
+      if (recordDate === nextBR || recordDate === nextISO) return 1440 + minutes;
+      return minutes;
+    }
+
+    return minutes;
+  }
+
+  function sortHistoryRecords(records, period = getActivePeriod()) {
+    return [...(records || [])].sort((a, b) => {
+      const aOrder = getChronologicalOrder(a, period);
+      const bOrder = getChronologicalOrder(b, period);
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return (a.timestamp || 0) - (b.timestamp || 0);
+    });
+  }
+
   function recordDateBR(record) {
     if (record.data) return record.data;
     if (record.dataISO) {
@@ -168,8 +196,7 @@
               resultados.push(normalized);
             }
           });
-          resultados.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-          resolve(resultados);
+          resolve(sortHistoryRecords(resultados, period));
         })
         .catch(error => {
           console.error('Erro ao buscar histórico:', error);
@@ -353,7 +380,7 @@
       knownHistoryEntries = {};
       dados.forEach(item => { knownHistoryEntries[item.id] = buildRecordSignature(item); });
 
-      displayedData = filtrarPorPeriodo(dados, period);
+      displayedData = sortHistoryRecords(filtrarPorPeriodo(dados, period), period);
       if (displayedData.length === 0) {
         mostrarEmptyStateGrafico(machine, data, period);
         criarGraficoVazio();
@@ -426,7 +453,7 @@
     const ctx = canvas.getContext('2d');
     if (chart) chart.destroy();
 
-    const pontos = dados.map(item => ({
+    const pontos = sortHistoryRecords(dados).map(item => ({
       label: item.data && item.data !== currentDate ? `${item.hora} (${item.data.slice(0, 5)})` : item.hora,
       timestamp: item.timestamp || 0,
       horaNum: item.horaNum,
@@ -435,7 +462,7 @@
       blank: item.blank || 0,
       neckring: item.neck_ring || 0,
       funil: item.funil || 0
-    })).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    }));
 
     ajustarLarguraGrafico(pontos.length);
 
@@ -518,7 +545,7 @@
       tbody.innerHTML = '<tr><td colspan="5" class="no-data">Nenhum registro encontrado</td></tr>';
       return;
     }
-    const ordenados = [...dados].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    const ordenados = sortHistoryRecords(dados);
     tbody.innerHTML = ordenados.map(item => {
       const tipoIcon = item.tipo === 'real_time' ? '⚡' : '⏰';
       const hora = item.data && item.data !== currentDate ? `${item.hora} (${item.data.slice(0, 5)})` : item.hora;
@@ -833,7 +860,7 @@
       };
 
       drawHeader();
-      [...displayedData].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)).forEach(item => {
+      sortHistoryRecords(displayedData).forEach(item => {
         if (y > pageHeight - 12) {
           doc.addPage('a4', 'landscape');
           y = 16;
