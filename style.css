@@ -1592,3 +1592,205 @@ body {
         font-size: 18px;
     }
 }
+/* ================= CORREÇÕES WMOLDES: TEMA, FILTROS E MODO COMPACTO ================= */
+.btn.active,
+#filtersBtn.active,
+#themeBtn.active,
+#compactModeBtn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #ffffff;
+    box-shadow: var(--shadow-hover);
+}
+
+body.dark-mode {
+    --bg: #0f172a;
+    --card-bg: #1e293b;
+    --text: #f8fafc;
+    --text-light: #cbd5e1;
+    --border: #334155;
+    --primary: #3b82f6;
+    --secondary: #8b5cf6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #06b6d4;
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    --shadow-hover: 0 16px 32px rgba(0, 0, 0, 0.36);
+    background: var(--bg);
+    color: var(--text);
+}
+
+body.dark-mode .header,
+body.dark-mode .filters-bar,
+body.dark-mode .stat-card,
+body.dark-mode .forno-section,
+body.dark-mode .machine-card,
+body.dark-mode .modal-content {
+    background: var(--card-bg);
+    border-color: var(--border);
+    color: var(--text);
+}
+
+body.dark-mode .search-input,
+body.dark-mode .filter-btn,
+body.dark-mode .btn {
+    background: #0f172a;
+    border-color: var(--border);
+    color: var(--text);
+}
+
+body.dark-mode .filter-btn:hover,
+body.dark-mode .btn:hover {
+    background: #334155;
+}
+
+.compact-metrics {
+    display: none;
+}
+
+body.compact-mode .forno-section {
+    padding-bottom: 20px;
+}
+
+body.compact-mode .forno-cards-container {
+    gap: 14px;
+    align-items: stretch;
+}
+
+body.compact-mode .machine-card {
+    width: 240px;
+    min-width: 240px;
+    min-height: auto;
+    padding: 16px;
+}
+
+body.compact-mode .machine-card:not(.maintenance) .gauges-container,
+body.compact-mode .machine-card:not(.maintenance) .status-indicators,
+body.compact-mode .machine-card:not(.maintenance) .machine-comment-preview,
+body.compact-mode .machine-card:not(.maintenance) .card-action {
+    display: none !important;
+}
+
+body.compact-mode .machine-card .card-header {
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+body.compact-mode .compact-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.compact-metric {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(37, 99, 235, 0.06);
+}
+
+.compact-metric span {
+    display: block;
+    color: var(--text-light);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.compact-metric strong {
+    color: var(--text);
+    font-size: 22px;
+    line-height: 1;
+}
+
+body.compact-mode .machine-card.critical,
+body.compact-mode .machine-card.warning,
+body.compact-mode .machine-card.normal {
+    min-height: 0;
+}
+
+body.compact-mode .machine-card.maintenance {
+    width: 240px;
+    min-width: 240px;
+}
+
+@media (max-width: 900px) {
+    .header-controls {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+
+    body.compact-mode .machine-card {
+        width: 220px;
+        min-width: 220px;
+    }
+}
+
+
+/* Correção robusta da abertura do painel de filtros */
+.filters-bar.active,
+#filtersBar.active {
+    display: block !important;
+}
+
+/* Botão de ocultar manutenção dentro dos filtros */
+#hideMaintenanceBtn.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+
+/* Manutenção compartilhada */
+.maintenance-toggle-btn {
+    min-width: 42px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: #64748b;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-sm);
+}
+.maintenance-toggle-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); background: rgba(100,116,139,.12); }
+.maintenance-toggle-btn.active { background: #64748b; color: #fff; border-color: #64748b; }
+.maquina.maintenance { border-color: #64748b; background: rgba(100,116,139,.08); }
+.maquina.maintenance .linha, .maquina.maintenance .alert-message { opacity: .55; }
+.maintenance-message { margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-sm); background: rgba(100,116,139,.14); color: var(--text); font-weight: 700; display: flex; align-items: center; gap: 8px; }
+
+/* Atalho para criar prefixo principal pelo seletor do card */
+.prefix-create-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.prefix-create-row .select-search {
+    flex: 1;
+    min-width: 0;
+}
+.prefix-add-btn {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border, #d9e2ef);
+    border-radius: 10px;
+    background: var(--primary, #0ea5e9);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+    flex: 0 0 auto;
+}
+.prefix-add-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md, 0 6px 14px rgba(15, 23, 42, .16));
+}
+.prefix-add-btn:active { transform: translateY(0); }

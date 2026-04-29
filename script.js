@@ -4,6 +4,7 @@
 
 // Dados das máquinas
 let dadosMaquinas = {};
+let machineMaintenance = {};
 
 // Prefixos pré-definidos - AGORA CARREGADOS DO FIREBASE
 let prefixos = [];
@@ -209,12 +210,34 @@ function carregarConfiguracoes() {
 // CARREGAR PREFIXOS
 // ====================================================
 
-async function carregarPrefixos() {
+function carregarPrefixos() {
     try {
-        prefixos = await getPrefixosFromFirebase();
-        console.log("✅ Prefixos carregados:", prefixos.length);
+        if (typeof db === 'undefined') {
+            console.warn("⚠️ Firebase ainda não inicializado para carregar prefixos");
+            prefixos = [];
+            return;
+        }
+
+        // Listener em tempo real: quando um prefixo detalhado for criado/editado/removido
+        // em qualquer um dos dois projetos, os selects e os cards são atualizados sem refresh.
+        db.ref("prefixDatabase").on("value", snapshot => {
+            try {
+                prefixos = buildPrefixList(snapshot.val() || {});
+                console.log("✅ Prefixos detalhados sincronizados:", prefixos.length);
+
+                if (typeof dadosMaquinas !== 'undefined' && Object.keys(dadosMaquinas || {}).length > 0) {
+                    criarPainel(dadosMaquinas);
+                }
+            } catch (innerError) {
+                console.error("❌ Erro ao processar prefixos:", innerError);
+                prefixos = [];
+            }
+        }, error => {
+            console.error("❌ Erro ao sincronizar prefixos:", error);
+            prefixos = [];
+        });
     } catch (error) {
-        console.error("❌ Erro ao carregar prefixos:", error);
+        console.error("❌ Erro ao iniciar sincronização de prefixos:", error);
         prefixos = [];
     }
 }
@@ -236,6 +259,15 @@ function inicializarFirebaseListeners() {
         }
     });
     
+    // Listener para manutenção (compartilhado entre os dois sites)
+    db.ref("manutencao").on("value", snapshot => {
+        machineMaintenance = snapshot.val() || {};
+        window.machineMaintenance = machineMaintenance;
+        if (Object.keys(dadosMaquinas).length > 0) {
+            criarPainel(dadosMaquinas);
+        }
+    });
+
     // Listener para configurações (sincroniza entre todos os usuários)
     db.ref("configuracoes").on("value", snapshot => {
         const configSalva = snapshot.val();
@@ -336,10 +368,13 @@ function criarPainel(maquinas) {
         );
         
         if (alerta) totalCriticos++;
+
+        const isInMaintenance = isMachineInMaintenance(id);
+        const maintenanceReason = machineMaintenance[id]?.reason || machineMaintenance[id]?.motivo || '';
         
         // Construir o HTML do cartão da máquina
         let maquinaHTML = `
-            <div class="maquina ${alerta ? 'alerta' : ''}">
+            <div class="maquina ${alerta ? 'alerta' : ''} ${isInMaintenance ? 'maintenance' : ''}">
                 <div class="maquina-header">
                     <div class="maquina-id"><i class="fas fa-industry"></i> Máquina ${id}</div>`;
         
@@ -359,9 +394,12 @@ function criarPainel(maquinas) {
                                 ${currentPrefixDisplay || currentPrefixo || 'Selecione um prefixo'}
                             </div>
                             <div class="select-items" id="select-${id}">
-                                <div class="select-search-container">
-                                    <input type="text" class="select-search" placeholder="Pesquisar prefixo..." 
-                                           oninput="filtrarOpcoes('${id}', this.value)">
+                                <div class="select-search-container prefix-create-row">
+                                    <input type="text" id="prefix-search-${id}" class="select-search" placeholder="Pesquisar prefixo..." 
+                                           oninput="filtrarOpcoes('${id}', this.value)" onkeydown="criarPrefixoComEnter(event, '${id}')">
+                                    <button type="button" class="prefix-add-btn" onclick="criarPrefixoPeloFiltro('${id}', event)" title="Criar prefixo principal e vincular à máquina">
+                                        <i class="fas fa-plus"></i>
+                                    </button>
                                 </div>
                                 ${prefixos.map(pref => `
                                     <div onclick="selecionarPrefixo('${id}', '${pref.id}')" 
@@ -380,11 +418,26 @@ function criarPainel(maquinas) {
                             ${currentPrefixRecord ? '' : 'disabled'}>
                             <i class="fas fa-eye"></i>
                         </button>
+                        <button
+                            type="button"
+                            class="maintenance-toggle-btn ${isMachineInMaintenance(id) ? 'active' : ''}"
+                            onclick="toggleMachineMaintenance('${id}')"
+                            title="${isMachineInMaintenance(id) ? 'Retirar da manutenção' : 'Colocar em parada para manutenção'}"
+                            aria-pressed="${isMachineInMaintenance(id)}">
+                            <i class="fas fa-tools"></i>
+                        </button>
                     </div>
                 </div>`;
         }
         
         maquinaHTML += `</div>`;
+
+        if (isInMaintenance) {
+            maquinaHTML += `
+                <div class="maintenance-message">
+                    <i class="fas fa-tools"></i> Parada para manutenção${maintenanceReason ? `: ${maintenanceReason}` : ''}
+                </div>`;
+        }
         
         // Molde
 if (config.mostrarMolde) {
@@ -669,15 +722,82 @@ function toggleCustomSelect(maquinaId) {
 
 function filtrarOpcoes(maquinaId, termo) {
     const select = document.getElementById(`select-${maquinaId}`);
-    const itens = select.querySelectorAll('div:not(.select-search-container)');
+    if (!select) return;
+    const itens = select.querySelectorAll(':scope > div:not(.select-search-container)');
+    const busca = String(termo || '').toLowerCase();
     
     itens.forEach(item => {
-        if (item.textContent.toLowerCase().includes(termo.toLowerCase())) {
+        if (item.textContent.toLowerCase().includes(busca)) {
             item.style.display = 'block';
         } else {
             item.style.display = 'none';
         }
     });
+}
+
+function normalizarNovoPrefixo(valor) {
+    return String(valor || '').trim().replace(/\s+/g, ' ');
+}
+
+function validarChaveFirebasePrefixo(prefixo) {
+    return prefixo && !/[.#$\[\]\/]/.test(prefixo);
+}
+
+function criarPrefixoComEnter(event, maquinaId) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        criarPrefixoPeloFiltro(maquinaId, event);
+    }
+}
+
+async function criarPrefixoPeloFiltro(maquinaId, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    const input = document.getElementById(`prefix-search-${maquinaId}`);
+    const prefixoId = normalizarNovoPrefixo(input ? input.value : '');
+
+    if (!prefixoId) {
+        mostrarNotificacao('Digite o prefixo no campo de pesquisa para criar.', 'warning');
+        return;
+    }
+
+    if (!validarChaveFirebasePrefixo(prefixoId)) {
+        mostrarNotificacao('O prefixo não pode conter os caracteres . # $ [ ] /', 'error');
+        return;
+    }
+
+    try {
+        const ref = db.ref(`prefixDatabase/${prefixoId}`);
+        const snap = await ref.once('value');
+
+        if (!snap.exists()) {
+            await ref.set({
+                nome: prefixoId,
+                displayName: prefixoId,
+                prefixoDetalhado: prefixoId,
+                criadoEm: Date.now(),
+                origem: 'atalho_card_maquina'
+            });
+        }
+
+        if (!prefixos.some(pref => pref.id === prefixoId)) {
+            prefixos.push({
+                id: prefixoId,
+                nome: prefixoId,
+                displayName: prefixoId,
+                prefixoDetalhado: prefixoId
+            });
+        }
+
+        selecionarPrefixo(maquinaId, prefixoId);
+        mostrarNotificacao(snap.exists() ? `Prefixo vinculado: ${prefixoId}` : `Prefixo criado e vinculado: ${prefixoId}`, 'success');
+    } catch (error) {
+        console.error('❌ Erro ao criar prefixo:', error);
+        mostrarNotificacao('Erro ao criar/vincular prefixo.', 'error');
+    }
 }
 
 function selecionarPrefixo(maquinaId, prefixoId) {
@@ -708,6 +828,10 @@ document.addEventListener('click', function(event) {
 // ====================================================
 
 async function alterar(maquinaId, tipo, delta) {
+    if (isMachineInMaintenance(maquinaId)) {
+        mostrarNotificacao('Máquina em parada para manutenção.', 'warning');
+        return;
+    }
     const writeKey = `${maquinaId}:${tipo}`;
     if (pendingMachineWrites.has(writeKey)) {
         return;
@@ -1965,3 +2089,39 @@ try {
     // Deixa disponível para teste no console: window.sincronizarMaquinasAgora()
     window.sincronizarMaquinasAgora = () => atualizarDoBanco('forcar');
 })();
+
+
+// ====================================================
+// MANUTENÇÃO COMPARTILHADA ENTRE PAINEL E ABASTECEDOR
+// ====================================================
+function isMachineInMaintenance(machineId) {
+    const status = machineMaintenance?.[machineId];
+    return !!(status && (status.isInMaintenance === true || status.status === 'maintenance' || status.status === 'manutencao'));
+}
+
+async function toggleMachineMaintenance(machineId) {
+    const current = isMachineInMaintenance(machineId);
+    const action = current ? 'retirar esta máquina da manutenção' : 'colocar esta máquina em parada para manutenção';
+    if (!confirm(`Deseja ${action}?`)) return;
+
+    try {
+        if (current) {
+            await db.ref(`manutencao/${machineId}`).remove();
+            mostrarNotificacao(`Máquina ${machineId} retomada da produção.`, 'success');
+        } else {
+            const reason = prompt('Motivo da manutenção (opcional):') || '';
+            await db.ref(`manutencao/${machineId}`).set({
+                isInMaintenance: true,
+                status: 'maintenance',
+                reason: reason.trim(),
+                startedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                source: 'controle-por-maquina'
+            });
+            mostrarNotificacao(`Máquina ${machineId} em parada para manutenção.`, 'success');
+        }
+    } catch (error) {
+        console.error('Erro ao atualizar manutenção:', error);
+        mostrarNotificacao('Erro ao atualizar manutenção.', 'error');
+    }
+}

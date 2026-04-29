@@ -12,7 +12,8 @@ let machineMaintenance = {};
 let activeFilters = {
     fornos: [],
     status: null,
-    search: ''
+    search: '',
+    hideMaintenance: false
 };
 
 // Elementos DOM
@@ -51,7 +52,8 @@ function initCardsDashboard() {
     activeFilters = {
         fornos: [],
         status: null,
-        search: ''
+        search: '',
+        hideMaintenance: false
     };
     
     // Mostrar mensagem de carregamento
@@ -88,17 +90,29 @@ function showLoadingMessage() {
 
 // ================= CARREGAR DADOS ADICIONAIS =================
 function loadMachinePrefixes() {
-    if (typeof adminConfigRef === 'undefined') return;
-    
-    adminConfigRef.child("prefixes").on("value", (snapshot) => {
-        machinePrefixes = snapshot.val() || {};
-        console.log("✅ Prefixos carregados:", Object.keys(machinePrefixes).length);
-        
+    if (typeof db === 'undefined') return;
+
+    // Fonte única e compartilhada entre o Painel e o Abastecedor:
+    // maquinas/{ID_DA_MAQUINA}/prefixo
+    db.ref("maquinas").on("value", (snapshot) => {
+        const maquinas = snapshot.val() || {};
+        const syncedPrefixes = {};
+
+        Object.keys(maquinas).forEach(machineId => {
+            const prefixo = maquinas[machineId]?.prefixo;
+            if (prefixo !== undefined && prefixo !== null && String(prefixo).trim() !== '') {
+                syncedPrefixes[machineId] = String(prefixo).trim();
+            }
+        });
+
+        machinePrefixes = syncedPrefixes;
+        console.log("✅ Prefixos de máquinas sincronizados:", Object.keys(machinePrefixes).length);
+
         if (Object.keys(allMachinesData).length > 0) {
             applyFilters();
         }
     }, (error) => {
-        console.error("❌ Erro ao carregar prefixos:", error);
+        console.error("❌ Erro ao sincronizar prefixos das máquinas:", error);
     });
 }
 
@@ -383,7 +397,7 @@ function createMachineCardHTML(machineId, machineData) {
     const maintenanceReason = machineMaintenance[machineId]?.reason || "";
     const status = isInMaintenance ? 'maintenance' : getMachineStatusWithLimits(machineData, limits);
     const forno = getFornoFromMachineId(machineId);
-    const prefixKey = machinePrefixes[machineId] || '';
+    const prefixKey = machineData?.prefixo || machinePrefixes[machineId] || '';
     const comment = machineComments[machineId] || {};
     
     // Se estiver em manutenção, mostrar card especial
@@ -578,7 +592,7 @@ function createMachineCard(machineId, machineData) {
     const maintenanceReason = machineMaintenance[machineId]?.reason || "";
     const status = isInMaintenance ? 'maintenance' : getMachineStatusWithLimits(machineData, limits);
     const forno = getFornoFromMachineId(machineId);
-    const prefixKey = machinePrefixes[machineId] || '';
+    const prefixKey = machineData?.prefixo || machinePrefixes[machineId] || '';
     const comment = machineComments[machineId] || {};
     
     // Se estiver em manutenção, criar card especial
@@ -783,9 +797,69 @@ function getFornoFromMachineId(machineId) {
     return null;
 }
 
+function normalizeMachineSearchTerm(value) {
+    return String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function isMachineInMaintenance(machineId) {
+    const status = machineMaintenance && machineMaintenance[machineId];
+    return !!(status && (status.isInMaintenance === true || status.status === 'maintenance' || status.status === 'manutencao'));
+}
+
+function matchesMachineSearch(machineId) {
+    const rawSearch = (activeFilters.search || '').trim();
+    if (!rawSearch) return true;
+
+    const normalizedSearch = normalizeMachineSearchTerm(rawSearch);
+    const normalizedId = normalizeMachineSearchTerm(machineId);
+    const forno = getFornoFromMachineId(machineId) || '';
+    const numericPart = String(machineId).match(/\d+/)?.[0] || '';
+    const prefixKey = machineData?.prefixo || machinePrefixes[machineId] || '';
+    const comment = machineComments[machineId]?.text || '';
+
+    const candidates = [machineId, normalizedId, numericPart, `${forno}${numericPart}`, `maquina${machineId}`, `maquina${normalizedId}`, prefixKey, comment]
+        .map(normalizeMachineSearchTerm)
+        .filter(Boolean);
+
+    return candidates.some(candidate => candidate.includes(normalizedSearch));
+}
+
+function syncFilterButtonStates() {
+    document.querySelectorAll('.filter-btn[data-forno]').forEach(btn => {
+        btn.classList.toggle('active', activeFilters.fornos.includes(btn.getAttribute('data-forno')));
+    });
+
+    const uiStatusMap = { critico: 'critical', baixo: 'warning', normal: 'normal' };
+    document.querySelectorAll('.filter-btn[data-status]').forEach(btn => {
+        const mapped = uiStatusMap[btn.getAttribute('data-status')] || btn.getAttribute('data-status');
+        btn.classList.toggle('active', activeFilters.status === mapped);
+    });
+
+    const clearStatusBtn = document.getElementById('clearStatusBtn');
+    if (clearStatusBtn) clearStatusBtn.classList.toggle('active', !activeFilters.status);
+
+    const hideMaintenanceBtn = document.getElementById('hideMaintenanceBtn');
+    if (hideMaintenanceBtn) {
+        const active = activeFilters.hideMaintenance === true;
+        hideMaintenanceBtn.classList.toggle('active', active);
+        hideMaintenanceBtn.setAttribute('aria-pressed', String(active));
+        hideMaintenanceBtn.innerHTML = active ? '<i class="fas fa-eye"></i> Mostrar paradas para manutenção' : '<i class="fas fa-eye-slash"></i> Ocultar paradas para manutenção';
+    }
+
+    const searchInput = document.getElementById('machineSearch');
+    if (searchInput && document.activeElement !== searchInput && searchInput.value.trim() !== (activeFilters.search || '')) {
+        searchInput.value = activeFilters.search || '';
+    }
+}
+
 // ================= APLICAR FILTROS (CORRIGIDO) =================
 function applyFilters() {
     console.log("🔍 Aplicando filtros...", activeFilters);
+    syncFilterButtonStates();
     
     // Limpar medidores antigos
     cleanupOldGauges();
@@ -795,6 +869,12 @@ function applyFilters() {
     Object.keys(allMachinesData).forEach(machineId => {
         const machineData = allMachinesData[machineId];
         let shouldInclude = true;
+
+        // Filtrar máquinas em manutenção quando solicitado
+        if (activeFilters.hideMaintenance && isMachineInMaintenance(machineId)) {
+            shouldInclude = false;
+            console.log(`❌ Máquina ${machineId} excluída por manutenção`);
+        }
         
         // Filtrar por forno - VERIFICAR SE O FORNO EXISTE
         if (activeFilters.fornos.length > 0) {
@@ -823,17 +903,10 @@ function applyFilters() {
             }
         }
         
-        // Filtrar por busca
-        if (activeFilters.search) {
-            const searchTerm = activeFilters.search.toLowerCase();
-            const prefixKey = machinePrefixes[machineId] || '';
-            const comment = machineComments[machineId]?.text || '';
-            const searchIn = `${machineId} ${prefixKey} ${comment}`.toLowerCase();
-            
-            if (!searchIn.includes(searchTerm)) {
-                shouldInclude = false;
-                console.log(`❌ Máquina ${machineId} excluída por filtro de busca`);
-            }
+        // Filtrar por busca de máquina, aceitando A1, a-1, Máquina A1 ou apenas 1.
+        if (!matchesMachineSearch(machineId)) {
+            shouldInclude = false;
+            console.log(`❌ Máquina ${machineId} excluída por filtro de busca`);
         }
         
         if (shouldInclude) {
@@ -849,7 +922,8 @@ function applyFilters() {
     // Verificar se há filtros ativos
     const hasFilters = activeFilters.fornos.length > 0 || 
                       activeFilters.status !== null || 
-                      activeFilters.search !== '';
+                      activeFilters.search !== '' ||
+                      activeFilters.hideMaintenance === true;
     
     if (hasFilters) {
         // Usar modo tradicional com filtros
@@ -1026,7 +1100,7 @@ async function openMachineDetails(machineId) {
     const maintenanceReason = machineMaintenance[machineId]?.reason || "";
     const status = isInMaintenance ? 'maintenance' : getMachineStatusWithLimits(machineData, limits);
     const forno = getFornoFromMachineId(machineId);
-    const prefixKey = machinePrefixes[machineId] || '';
+    const prefixKey = machineData?.prefixo || machinePrefixes[machineId] || '';
     const comment = machineComments[machineId] || {};
     const imageUrl = machineImages[machineId]?.url || '';
     
@@ -1496,7 +1570,86 @@ function setupEventListeners() {
         }
     });
     
-    console.log("✅ Event listeners configurados");
+    // Botão Filtros: abre/fecha a barra de filtros.
+    const filtersBtn = document.getElementById('filtersBtn');
+    const filtersBar = document.getElementById('filtersBar');
+    if (filtersBtn && filtersBar && !filtersBtn.dataset.bound) {
+        filtersBtn.dataset.bound = 'true';
+        filtersBtn.addEventListener('click', () => {
+            filtersBar.classList.toggle('active');
+            filtersBtn.classList.toggle('active', filtersBar.classList.contains('active'));
+        });
+    }
+    document.querySelectorAll('.filter-btn[data-forno]').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = 'true';
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            const forno = btn.getAttribute('data-forno');
+            const index = activeFilters.fornos.indexOf(forno);
+            if (index >= 0) { activeFilters.fornos.splice(index, 1); btn.classList.remove('active'); }
+            else { activeFilters.fornos.push(forno); btn.classList.add('active'); }
+            applyFilters();
+        });
+    });
+    const statusMap = { critico: 'critical', baixo: 'warning', normal: 'normal' };
+    document.querySelectorAll('.filter-btn[data-status]').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = 'true';
+        btn.addEventListener('click', () => {
+            const status = statusMap[btn.getAttribute('data-status')] || btn.getAttribute('data-status');
+            document.querySelectorAll('.filter-btn[data-status]').forEach(item => item.classList.remove('active'));
+            if (activeFilters.status === status) { activeFilters.status = null; btn.classList.remove('active'); }
+            else { activeFilters.status = status; btn.classList.add('active'); }
+            applyFilters();
+        });
+    });
+    const clearFornoBtn = document.getElementById('clearFornoBtn');
+    if (clearFornoBtn && !clearFornoBtn.dataset.bound) {
+        clearFornoBtn.dataset.bound = 'true';
+        clearFornoBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            activeFilters.fornos = [];
+            document.querySelectorAll('.filter-btn[data-forno]').forEach(btn => btn.classList.remove('active'));
+            applyFilters();
+        });
+    }
+    const clearStatusBtn = document.getElementById('clearStatusBtn');
+    if (clearStatusBtn && !clearStatusBtn.dataset.bound) {
+        clearStatusBtn.dataset.bound = 'true';
+        clearStatusBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            activeFilters.status = null;
+            document.querySelectorAll('.filter-btn[data-status]').forEach(btn => btn.classList.remove('active'));
+            applyFilters();
+        });
+    }
+    const hideMaintenanceBtn = document.getElementById('hideMaintenanceBtn');
+    if (hideMaintenanceBtn && !hideMaintenanceBtn.dataset.bound) {
+        hideMaintenanceBtn.dataset.bound = 'true';
+        hideMaintenanceBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            activeFilters.hideMaintenance = !activeFilters.hideMaintenance;
+            hideMaintenanceBtn.classList.toggle('active', activeFilters.hideMaintenance);
+            hideMaintenanceBtn.setAttribute('aria-pressed', String(activeFilters.hideMaintenance));
+            applyFilters();
+        });
+    }
+    const searchInput = document.getElementById('machineSearch');
+    if (searchInput && !searchInput.dataset.bound) {
+        searchInput.dataset.bound = 'true';
+        let searchTimer = null;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => { activeFilters.search = searchInput.value.trim(); applyFilters(); }, 180);
+        });
+    }
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn && !refreshBtn.dataset.bound) {
+        refreshBtn.dataset.bound = 'true';
+        refreshBtn.addEventListener('click', refreshData);
+    }
+
 }
 
 // ================= FUNÇÕES AUXILIARES =================
@@ -1597,7 +1750,10 @@ function clearAllFilters() {
         activeFilters.fornos = [];
         activeFilters.status = null;
         activeFilters.search = '';
+        activeFilters.hideMaintenance = false;
     }
+    const hideMaintenanceBtn = document.getElementById('hideMaintenanceBtn');
+    if (hideMaintenanceBtn) { hideMaintenanceBtn.setAttribute('aria-pressed', 'false'); hideMaintenanceBtn.innerHTML = '<i class="fas fa-eye-slash"></i> Ocultar paradas para manutenção'; }
     
     // Remover active de todos os botões de filtro
     document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -1738,3 +1894,303 @@ function debugFilters() {
 
 // Exportar para depuração
 window.debugFilters = debugFilters;
+
+// ============================================================================
+// FILTROS PROFISSIONAIS DEFINITIVOS - Dashboard Cartões Produção
+// Mantém todo o restante do arquivo original e substitui apenas a lógica de filtros.
+// ============================================================================
+(function installProfessionalMachineFilters() {
+    'use strict';
+
+    function normalizeText(value) {
+        return String(value || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function machineNumber(machineId) {
+        const match = String(machineId || '').match(/\d+/);
+        return match ? match[0] : '';
+    }
+
+    function getMachineFornoProfessional(machineId) {
+        const id = String(machineId || '').trim().toUpperCase();
+        if (!id) return null;
+        if (/^A\d+/.test(id) || id.startsWith('A')) return 'A';
+        if (/^B\d+/.test(id) || id.startsWith('B')) return 'B';
+        if (/^C\d+/.test(id) || id.startsWith('C')) return 'C';
+        const n = parseInt(id, 10);
+        if (!Number.isNaN(n) && n >= 10 && n <= 15) return 'D';
+        if (/^D\d+/.test(id) || id.startsWith('D')) return 'D';
+        return null;
+    }
+
+    function getMachineMaintenanceProfessional(machineId) {
+        const item = machineMaintenance && machineMaintenance[machineId];
+        if (!item) return false;
+        if (item === true) return true;
+        const value = String(item.status || item.situacao || item.state || '').toLowerCase();
+        return item.isInMaintenance === true || item.manutencao === true || item.emManutencao === true || value.includes('maintenance') || value.includes('manutencao') || value.includes('manutenção');
+    }
+
+    function getMachineStatusProfessional(machineId, machineData) {
+        if (getMachineMaintenanceProfessional(machineId)) return 'maintenance';
+        const limits = machineLimits[machineId] || DEFAULT_LIMITS;
+        return getMachineStatusWithLimits(machineData || {}, limits);
+    }
+
+    function matchesSearchProfessional(machineId, machineData) {
+        const term = normalizeText(activeFilters.search || '');
+        if (!term) return true;
+
+        const id = String(machineId || '');
+        const forno = getMachineFornoProfessional(machineId) || '';
+        const number = machineNumber(machineId);
+        const prefix = machineData?.prefixo || machinePrefixes[machineId] || '';
+        const comment = machineComments[machineId]?.text || '';
+
+        const candidates = [
+            id,
+            number,
+            forno,
+            forno + number,
+            'maquina' + id,
+            'maquina' + forno + number,
+            'máquina' + id,
+            prefix,
+            comment,
+            machineData?.prefixo,
+            machineData?.nome,
+            machineData?.name
+        ].map(normalizeText).filter(Boolean);
+
+        return candidates.some(candidate => candidate.includes(term));
+    }
+
+    function hasActiveProfessionalFilters() {
+        return Boolean(
+            (activeFilters.fornos && activeFilters.fornos.length) ||
+            activeFilters.status ||
+            (activeFilters.search && activeFilters.search.trim()) ||
+            activeFilters.hideMaintenance === true
+        );
+    }
+
+    function syncProfessionalFilterUI() {
+        document.querySelectorAll('.filter-btn[data-forno]').forEach(button => {
+            const forno = button.getAttribute('data-forno');
+            button.classList.toggle('active', activeFilters.fornos.includes(forno));
+            button.setAttribute('aria-pressed', String(activeFilters.fornos.includes(forno)));
+        });
+
+        const statusUiToInternal = { critico: 'critical', baixo: 'warning', normal: 'normal' };
+        document.querySelectorAll('.filter-btn[data-status]').forEach(button => {
+            const raw = button.getAttribute('data-status');
+            const status = statusUiToInternal[raw] || raw;
+            const active = activeFilters.status === status;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+
+        const clearStatusBtn = document.getElementById('clearStatusBtn');
+        if (clearStatusBtn) {
+            const active = !activeFilters.status;
+            clearStatusBtn.classList.toggle('active', active);
+            clearStatusBtn.setAttribute('aria-pressed', String(active));
+        }
+
+        const hideMaintenanceBtn = document.getElementById('hideMaintenanceBtn');
+        if (hideMaintenanceBtn) {
+            const hidden = activeFilters.hideMaintenance === true;
+            hideMaintenanceBtn.classList.toggle('active', hidden);
+            hideMaintenanceBtn.setAttribute('aria-pressed', String(hidden));
+            hideMaintenanceBtn.innerHTML = hidden
+                ? '<i class="fas fa-eye"></i> Mostrar paradas para manutenção'
+                : '<i class="fas fa-eye-slash"></i> Ocultar paradas para manutenção';
+        }
+
+        const searchInput = document.getElementById('machineSearch');
+        if (searchInput && document.activeElement !== searchInput) {
+            searchInput.value = activeFilters.search || '';
+        }
+    }
+
+    function renderProfessionalFilteredCards(data) {
+        const fornoSections = document.getElementById('fornoSections');
+        const container = document.getElementById('cardsContainer');
+        if (fornoSections) fornoSections.style.display = 'none';
+        if (!container) return;
+
+        container.style.display = 'grid';
+        container.classList.remove('horizontal-view');
+        generateMachineCards(data);
+
+        setTimeout(() => {
+            if (typeof recreateFilteredGauges === 'function') recreateFilteredGauges();
+            if (typeof window.__wmUpdateCompactCards === 'function') window.__wmUpdateCompactCards();
+        }, 120);
+    }
+
+    function renderProfessionalUnfiltered() {
+        const fornoSections = document.getElementById('fornoSections');
+        const container = document.getElementById('cardsContainer');
+        if (container) container.style.display = 'none';
+        if (fornoSections) fornoSections.style.display = '';
+        generateFornoSections();
+        setTimeout(() => {
+            if (typeof window.__wmUpdateCompactCards === 'function') window.__wmUpdateCompactCards();
+        }, 120);
+    }
+
+    window.applyFilters = applyFilters = function applyFiltersProfessional() {
+        if (!activeFilters || typeof activeFilters !== 'object') {
+            activeFilters = { fornos: [], status: null, search: '', hideMaintenance: false };
+        }
+        if (!Array.isArray(activeFilters.fornos)) activeFilters.fornos = [];
+
+        const filtered = {};
+        Object.keys(allMachinesData || {}).forEach(machineId => {
+            const machineData = allMachinesData[machineId] || {};
+            const forno = getMachineFornoProfessional(machineId);
+            const status = getMachineStatusProfessional(machineId, machineData);
+            const inMaintenance = status === 'maintenance';
+
+            if (activeFilters.fornos.length && !activeFilters.fornos.includes(forno)) return;
+            if (activeFilters.status && status !== activeFilters.status) return;
+            if (activeFilters.hideMaintenance && inMaintenance) return;
+            if (!matchesSearchProfessional(machineId, machineData)) return;
+
+            filtered[machineId] = machineData;
+        });
+
+        filteredMachinesData = filtered;
+        syncProfessionalFilterUI();
+
+        if (hasActiveProfessionalFilters()) renderProfessionalFilteredCards(filtered);
+        else renderProfessionalUnfiltered();
+
+        updateStatistics();
+        console.log('[WMoldes] Filtros aplicados:', activeFilters, Object.keys(filtered).length, 'máquinas');
+    };
+
+    window.getFornoFromMachineId = getFornoFromMachineId = getMachineFornoProfessional;
+    window.isMachineInMaintenance = isMachineInMaintenance = getMachineMaintenanceProfessional;
+    window.matchesMachineSearch = matchesMachineSearch = function(machineId) {
+        return matchesSearchProfessional(machineId, allMachinesData[machineId] || {});
+    };
+
+    function bindProfessionalFilterControls() {
+        const filtersBtn = document.getElementById('filtersBtn');
+        const filtersBar = document.getElementById('filtersBar');
+        if (filtersBtn && filtersBar && !filtersBtn.dataset.professionalFilterToggle) {
+            filtersBtn.dataset.professionalFilterToggle = 'true';
+            filtersBtn.setAttribute('aria-controls', 'filtersBar');
+            filtersBtn.addEventListener('click', function(event) {
+                event.preventDefault();
+                const open = !(filtersBar.classList.contains('active') || filtersBar.style.display === 'block');
+                filtersBar.classList.toggle('active', open);
+                filtersBar.style.display = open ? 'block' : 'none';
+                filtersBtn.classList.toggle('active', open);
+                filtersBtn.setAttribute('aria-expanded', String(open));
+            }, true);
+        }
+
+        const filterBar = document.getElementById('filtersBar');
+        if (filterBar && !filterBar.dataset.professionalDelegated) {
+            filterBar.dataset.professionalDelegated = 'true';
+            filterBar.addEventListener('click', function(event) {
+                const button = event.target.closest('button');
+                if (!button || !filterBar.contains(button)) return;
+
+                const forno = button.getAttribute('data-forno');
+                const statusRaw = button.getAttribute('data-status');
+
+                if (forno) {
+                    event.preventDefault();
+                    const index = activeFilters.fornos.indexOf(forno);
+                    if (index >= 0) activeFilters.fornos.splice(index, 1);
+                    else activeFilters.fornos.push(forno);
+                    applyFilters();
+                    return;
+                }
+
+                if (button.id === 'clearFornoBtn') {
+                    event.preventDefault();
+                    activeFilters.fornos = [];
+                    applyFilters();
+                    return;
+                }
+
+                if (statusRaw) {
+                    event.preventDefault();
+                    const map = { critico: 'critical', baixo: 'warning', normal: 'normal' };
+                    const status = map[statusRaw] || statusRaw;
+                    activeFilters.status = activeFilters.status === status ? null : status;
+                    applyFilters();
+                    return;
+                }
+
+                if (button.id === 'clearStatusBtn') {
+                    event.preventDefault();
+                    activeFilters.status = null;
+                    applyFilters();
+                    return;
+                }
+
+                if (button.id === 'hideMaintenanceBtn') {
+                    event.preventDefault();
+                    activeFilters.hideMaintenance = !activeFilters.hideMaintenance;
+                    applyFilters();
+                }
+            }, true);
+        }
+
+        const searchInput = document.getElementById('machineSearch');
+        if (searchInput && !searchInput.dataset.professionalSearch) {
+            searchInput.dataset.professionalSearch = 'true';
+            let timer = null;
+            searchInput.addEventListener('input', function() {
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    activeFilters.search = searchInput.value.trim();
+                    applyFilters();
+                }, 80);
+            });
+            searchInput.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') {
+                    searchInput.value = '';
+                    activeFilters.search = '';
+                    applyFilters();
+                }
+            });
+        }
+
+        syncProfessionalFilterUI();
+    }
+
+    const previousSetupEventListeners = setupEventListeners;
+    setupEventListeners = function setupEventListenersProfessional() {
+        if (typeof previousSetupEventListeners === 'function') previousSetupEventListeners();
+        bindProfessionalFilterControls();
+    };
+
+    const previousClearAllFilters = window.clearAllFilters || clearAllFilters;
+    window.clearAllFilters = clearAllFilters = function clearAllFiltersProfessional() {
+        activeFilters.fornos = [];
+        activeFilters.status = null;
+        activeFilters.search = '';
+        activeFilters.hideMaintenance = false;
+        const searchInput = document.getElementById('machineSearch');
+        if (searchInput) searchInput.value = '';
+        document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        applyFilters();
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindProfessionalFilterControls);
+    } else {
+        bindProfessionalFilterControls();
+    }
+})();
