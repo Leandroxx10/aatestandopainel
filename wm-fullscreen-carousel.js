@@ -18,10 +18,7 @@
     perPage: Number(localStorage.getItem(STORAGE.perPage) || 1),
     includeHidden: localStorage.getItem(STORAGE.includeHidden) === 'true',
     showMaintenance: localStorage.getItem(STORAGE.showMaintenance) !== 'false',
-    sourceCards: [],
-    liveRefreshTimer: null,
-    domObserver: null,
-    refreshPending: false
+    sourceCards: []
   };
 
   const qs = (s, r = document) => r.querySelector(s);
@@ -99,7 +96,55 @@
     if (state.active) rebuildOverlay();
   }
 
+  function findSourceCardForClone(clone) {
+    const id = clone?.dataset?.machineId;
+    if (!id) return null;
+    return qsa('#fornoSections .machine-card, #cardsContainer .machine-card').find(card => card.dataset.machineId === id) || null;
+  }
+
+  function refreshCloneFromSource(clone, source) {
+    if (!clone || !source) return;
+    clone.innerHTML = source.innerHTML;
+    clone.className = source.className;
+    clone.dataset.machineId = source.dataset.machineId || '';
+    clone.dataset.forno = source.dataset.forno || '';
+    clone.dataset.maintenance = source.dataset.maintenance || 'false';
+    clone.dataset.status = source.dataset.status || '';
+    clone.removeAttribute('id');
+    qsa('[id]', clone).forEach(el => el.removeAttribute('id'));
+    copyCanvases([source], clone.parentElement || clone);
+    clone.style.transform = 'translateZ(0)';
+  }
+
+  function refreshVisibleFullscreenCards() {
+    const overlay = qs('#wmFullscreenCarouselOverlay');
+    if (!overlay || !state.active) return;
+
+    const sourceNow = getCards();
+    const sourceIds = sourceNow.map(card => card.dataset.machineId).filter(Boolean).join('|');
+    const cloneIds = qsa('.wm-fs-slide .machine-card', overlay).map(card => card.dataset.machineId).filter(Boolean).join('|');
+
+    // Se entrou/saiu máquina por filtro/manutenção, recria uma vez no ponto seguro da troca.
+    if (sourceIds !== cloneIds) {
+      const keepIndex = state.index;
+      state.sourceCards = sourceNow;
+      makeOverlay(state.sourceCards);
+      const total = qsa('#wmFullscreenCarouselOverlay .wm-fs-slide').length;
+      state.index = Math.max(0, Math.min(keepIndex, total - 1));
+      update();
+      return;
+    }
+
+    // Atualiza os clones somente no checkpoint do carrossel, antes da próxima rolagem.
+    qsa('.wm-fs-slide .machine-card', overlay).forEach(clone => {
+      refreshCloneFromSource(clone, findSourceCardForClone(clone));
+    });
+    update();
+  }
+
+
   function step() {
+    refreshVisibleFullscreenCards();
     const total = qsa('#wmFullscreenCarouselOverlay .wm-fs-slide').length;
     if (total <= 1) return;
     if (state.index >= total - 1) state.dir = -1;
@@ -178,61 +223,13 @@
     return overlay;
   }
 
-  function rebuildOverlay(options = {}) {
-    const keepPosition = !!options.keepPosition;
-    const previousIndex = state.index;
+  function rebuildOverlay() {
     state.sourceCards = getCards();
-    const totalSlides = Math.max(1, Math.ceil(state.sourceCards.length / state.perPage));
-    state.index = keepPosition ? Math.min(previousIndex, totalSlides - 1) : 0;
-    if (!keepPosition) state.dir = 1;
+    state.index = 0;
+    state.dir = 1;
     makeOverlay(state.sourceCards);
     update();
     restart();
-  }
-
-  function scheduleLiveRefresh() {
-    if (!state.active || state.refreshPending) return;
-    state.refreshPending = true;
-    requestAnimationFrame(() => {
-      state.refreshPending = false;
-      if (!state.active) return;
-      rebuildOverlay({ keepPosition: true });
-    });
-  }
-
-  function startLiveRefresh() {
-    stopLiveRefresh();
-    state.liveRefreshTimer = setInterval(() => {
-      if (state.active) rebuildOverlay({ keepPosition: true });
-    }, 1000);
-
-    const root = qs('#fornoSections') || qs('#cardsContainer') || document.body;
-    if (window.MutationObserver && root) {
-      state.domObserver = new MutationObserver(mutations => {
-        if (!state.active) return;
-        const relevant = mutations.some(m =>
-          m.type === 'childList' ||
-          m.type === 'characterData' ||
-          (m.type === 'attributes' && ['class', 'style', 'data-maintenance', 'data-machine-id'].includes(m.attributeName))
-        );
-        if (relevant) scheduleLiveRefresh();
-      });
-      state.domObserver.observe(root, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: ['class', 'style', 'data-maintenance', 'data-machine-id']
-      });
-    }
-  }
-
-  function stopLiveRefresh() {
-    if (state.liveRefreshTimer) clearInterval(state.liveRefreshTimer);
-    state.liveRefreshTimer = null;
-    if (state.domObserver) state.domObserver.disconnect();
-    state.domObserver = null;
-    state.refreshPending = false;
   }
 
   function activate() {
@@ -246,7 +243,6 @@
     if (btn) { btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true'); btn.innerHTML = '<i class="fas fa-compress"></i> Sair Tela Cheia'; }
     const overlay = makeOverlay(state.sourceCards);
     update(); restart();
-    startLiveRefresh();
     if (overlay.requestFullscreen) overlay.requestFullscreen().catch(() => {});
   }
 
@@ -254,7 +250,6 @@
     state.active = false;
     clearInterval(state.timer);
     state.timer = null;
-    stopLiveRefresh();
     document.body.classList.remove('wm-fullscreen-active');
     qs('#wmFullscreenCarouselOverlay')?.remove();
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
@@ -314,8 +309,5 @@
     document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && state.active) deactivate(); });
   }
 
-  window.WMFullscreenCarouselRefresh = scheduleLiveRefresh;
-  window.addEventListener('storage', scheduleLiveRefresh);
-  window.addEventListener('wmoldes:data-updated', scheduleLiveRefresh);
   document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', bind) : bind();
 })();
