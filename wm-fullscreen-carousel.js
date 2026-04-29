@@ -1,63 +1,65 @@
-/* WMoldes - Tela Cheia: carrossel profissional com filtros e quantidade por tela */
+/* WMoldes - Tela Cheia: carrossel único automático com controles profissionais */
 (function () {
   'use strict';
 
-  const SPEED_KEY = 'wmoldes_fullscreen_carousel_speed_seconds';
-  const SHOW_MAINT_KEY = 'wmoldes_fullscreen_show_maintenance';
-  const ALL_MACHINES_KEY = 'wmoldes_fullscreen_all_machines';
-  const PER_VIEW_KEY = 'wmoldes_fullscreen_cards_per_view';
+  const STORAGE = {
+    speed: 'wmoldes_fs_speed_seconds',
+    perPage: 'wmoldes_fs_cards_per_slide',
+    includeHidden: 'wmoldes_fs_include_all_machines',
+    showMaintenance: 'wmoldes_fs_show_maintenance'
+  };
 
   const state = {
     active: false,
     index: 0,
     dir: 1,
     timer: null,
-    speed: Number(localStorage.getItem(SPEED_KEY) || 6),
-    showMaintenance: localStorage.getItem(SHOW_MAINT_KEY) !== 'false',
-    allMachines: localStorage.getItem(ALL_MACHINES_KEY) === 'true',
-    perView: Number(localStorage.getItem(PER_VIEW_KEY) || 1)
+    speed: Number(localStorage.getItem(STORAGE.speed) || 6),
+    perPage: Number(localStorage.getItem(STORAGE.perPage) || 1),
+    includeHidden: localStorage.getItem(STORAGE.includeHidden) === 'true',
+    showMaintenance: localStorage.getItem(STORAGE.showMaintenance) !== 'false',
+    sourceCards: [],
+    liveRefreshTimer: null,
+    domObserver: null,
+    refreshPending: false
   };
 
   const qs = (s, r = document) => r.querySelector(s);
   const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-  function isVisible(el) {
-    const st = getComputedStyle(el);
-    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
-  }
-
   function isMaintenance(card) {
-    return card.dataset.maintenance === 'true' || card.classList.contains('maintenance');
+    return card?.dataset?.maintenance === 'true' || card?.classList?.contains('maintenance') || /manuten[cç][aã]o/i.test(card?.textContent || '');
   }
 
-  function allCards() {
+  function isVisible(card) {
+    const st = getComputedStyle(card);
+    return st.display !== 'none' && st.visibility !== 'hidden' && card.offsetParent !== null;
+  }
+
+  function getCards() {
+    let list = qsa('#fornoSections .machine-card, #cardsContainer .machine-card');
     const seen = new Set();
-    return qsa('#fornoSections .machine-card, #cardsContainer .machine-card')
-      .filter(card => {
-        const id = card.dataset.machineId || card.textContent.trim();
-        if (seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      });
-  }
-
-  function sourceCards() {
-    return allCards().filter(card => {
-      if (!state.allMachines && !isVisible(card)) return false;
+    list = list.filter(card => {
+      const id = card.dataset.machineId || card.textContent.trim().slice(0, 60);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      if (!state.includeHidden && !isVisible(card)) return false;
       if (!state.showMaintenance && isMaintenance(card)) return false;
       return true;
     });
+    return list;
   }
 
-  function chunk(items, size) {
-    const out = [];
-    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-    return out;
+  function chunkCards(cards, size) {
+    const chunks = [];
+    for (let i = 0; i < cards.length; i += size) chunks.push(cards.slice(i, i + size));
+    return chunks;
   }
 
-  function copyCanvases(srcCards, dstCards) {
+  function copyCanvases(srcCards, dstRoot) {
+    const dstCards = qsa('.machine-card', dstRoot);
     srcCards.forEach((src, i) => qsa('canvas', src).forEach((cv, j) => {
-      const dst = qsa('canvas', dstCards[i] || [])[j];
+      const dst = qsa('canvas', dstCards[i] || document.createElement('div'))[j];
       if (!dst) return;
       try {
         dst.width = cv.width;
@@ -68,19 +70,33 @@
   }
 
   function setSpeed(v) {
-    state.speed = Math.max(2, Math.min(15, Number(v) || 6));
-    localStorage.setItem(SPEED_KEY, String(state.speed));
+    state.speed = Math.max(2, Math.min(30, Number(v) || 6));
+    localStorage.setItem(STORAGE.speed, String(state.speed));
     qsa('#fullscreenSpeedRange,#wmFsSpeedRange').forEach(e => e.value = state.speed);
     qsa('#fullscreenSpeedValue,#wmFsSpeedValue').forEach(e => e.textContent = state.speed + 's');
     restart();
   }
 
-  function setPerView(v) {
-    state.perView = Math.max(1, Math.min(4, Number(v) || 1));
-    localStorage.setItem(PER_VIEW_KEY, String(state.perView));
-    qsa('#wmFsPerView').forEach(e => e.value = state.perView);
-    qsa('#wmFsPerViewValue').forEach(e => e.textContent = state.perView);
-    if (state.active) rebuildSlides();
+  function setPerPage(v) {
+    state.perPage = Math.max(1, Math.min(4, Number(v) || 1));
+    localStorage.setItem(STORAGE.perPage, String(state.perPage));
+    const input = qs('#wmFsCardsPerSlide');
+    const value = qs('#wmFsCardsPerSlideValue');
+    if (input) input.value = state.perPage;
+    if (value) value.textContent = state.perPage;
+    if (state.active) rebuildOverlay();
+  }
+
+  function setIncludeHidden(v) {
+    state.includeHidden = !!v;
+    localStorage.setItem(STORAGE.includeHidden, String(state.includeHidden));
+    if (state.active) rebuildOverlay();
+  }
+
+  function setShowMaintenance(v) {
+    state.showMaintenance = !!v;
+    localStorage.setItem(STORAGE.showMaintenance, String(state.showMaintenance));
+    if (state.active) rebuildOverlay();
   }
 
   function step() {
@@ -105,113 +121,132 @@
     const totalSlides = qsa('.wm-fs-slide', overlay).length;
     const totalCards = qsa('.wm-fs-slide .machine-card', overlay).length;
     const counter = qs('#wmFsCounter', overlay);
-    if (counter) counter.textContent = totalSlides ? (state.index + 1) + ' / ' + totalSlides + ' telas • ' + totalCards + ' máquinas' : '0 máquinas';
-    const allBtn = qs('#wmFsAllMachines', overlay);
-    const maintBtn = qs('#wmFsMaintenance', overlay);
-    if (allBtn) {
-      allBtn.classList.toggle('active', state.allMachines);
-      allBtn.innerHTML = state.allMachines ? '<i class="fas fa-layer-group"></i> Todas as máquinas' : '<i class="fas fa-eye"></i> Apenas visíveis';
-    }
-    if (maintBtn) {
-      maintBtn.classList.toggle('active', state.showMaintenance);
-      maintBtn.innerHTML = state.showMaintenance ? '<i class="fas fa-tools"></i> Manutenção visível' : '<i class="fas fa-eye-slash"></i> Ocultar manutenção';
-    }
+    if (counter) counter.textContent = totalSlides ? (state.index + 1) + ' / ' + totalSlides + '  •  ' + totalCards + ' máquinas' : '0 máquinas';
   }
 
-  function appendSlide(track, group) {
-    const slide = document.createElement('div');
-    slide.className = 'wm-fs-slide';
-    slide.style.setProperty('--wm-fs-per-view', String(state.perView));
-    group.forEach(card => {
-      const slot = document.createElement('div');
-      slot.className = 'wm-fs-card-slot';
-      const clone = card.cloneNode(true);
-      clone.removeAttribute('id');
-      qsa('[id]', clone).forEach(el => el.removeAttribute('id'));
-      slot.appendChild(clone);
-      slide.appendChild(slot);
-    });
-    track.appendChild(slide);
+  function controlButton(id, icon, text, active) {
+    return '<button type="button" id="' + id + '" class="wm-fs-chip ' + (active ? 'active' : '') + '"><i class="fas ' + icon + '"></i> ' + text + '</button>';
   }
 
-  function rebuildSlides() {
-    const overlay = qs('#wmFullscreenCarouselOverlay');
-    const track = qs('#wmFsTrack', overlay || document);
-    const empty = qs('#wmFsEmpty', overlay || document);
-    if (!track) return;
-    const cards = sourceCards();
-    track.innerHTML = '';
-    state.index = 0;
-    state.dir = 1;
-    if (!cards.length) {
-      if (empty) empty.style.display = 'flex';
-      update();
-      restart();
-      return;
-    }
-    if (empty) empty.style.display = 'none';
-    chunk(cards, state.perView).forEach(group => appendSlide(track, group));
-    copyCanvases(cards, qsa('.wm-fs-slide .machine-card', overlay));
-    update();
-    restart();
-  }
-
-  function makeOverlay() {
+  function makeOverlay(sourceCards) {
     qs('#wmFullscreenCarouselOverlay')?.remove();
+    const chunks = chunkCards(sourceCards, state.perPage);
     const overlay = document.createElement('div');
     overlay.id = 'wmFullscreenCarouselOverlay';
     overlay.innerHTML = `
       <div class="wm-fs-topbar">
         <div class="wm-fs-title"><i class="fas fa-industry"></i> Máquinas em tela cheia</div>
         <div class="wm-fs-controls">
-          <button type="button" id="wmFsAllMachines" class="wm-fs-option"></button>
-          <button type="button" id="wmFsMaintenance" class="wm-fs-option"></button>
+          ${controlButton('wmFsAllMachines', 'fa-layer-group', 'Todas as máquinas', state.includeHidden)}
+          ${controlButton('wmFsMaintenance', state.showMaintenance ? 'fa-eye' : 'fa-eye-slash', state.showMaintenance ? 'Manutenção visível' : 'Manutenção oculta', state.showMaintenance)}
           <label class="wm-fs-select">Cards por tela
-            <select id="wmFsPerView">
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
+            <select id="wmFsCardsPerSlide">
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
             </select>
           </label>
-          <label class="wm-fs-speed">Velocidade <input type="range" min="2" max="15" step="1" value="${state.speed}" id="wmFsSpeedRange"><strong id="wmFsSpeedValue">${state.speed}s</strong></label>
+          <label class="wm-fs-speed">Velocidade <input type="range" min="2" max="30" step="1" value="${state.speed}" id="wmFsSpeedRange"><strong id="wmFsSpeedValue">${state.speed}s</strong></label>
           <button type="button" id="wmFsClose" class="wm-fs-close"><i class="fas fa-compress"></i> Sair</button>
         </div>
       </div>
-      <div class="wm-fs-viewport">
-        <div class="wm-fs-track" id="wmFsTrack"></div>
-        <div class="wm-fs-empty" id="wmFsEmpty"><i class="fas fa-info-circle"></i> Nenhuma máquina disponível com os filtros atuais.</div>
-      </div>
+      <div class="wm-fs-viewport"><div class="wm-fs-track" id="wmFsTrack"></div></div>
       <div class="wm-fs-counter" id="wmFsCounter"></div>`;
+
+    const track = qs('#wmFsTrack', overlay);
+    if (!chunks.length) {
+      track.innerHTML = '<div class="wm-fs-empty">Nenhuma máquina encontrada com os filtros atuais.</div>';
+    }
+    chunks.forEach(group => {
+      const slide = document.createElement('div');
+      slide.className = 'wm-fs-slide cards-' + state.perPage;
+      group.forEach(card => {
+        const clone = card.cloneNode(true);
+        clone.removeAttribute('id');
+        qsa('[id]', clone).forEach(el => el.removeAttribute('id'));
+        slide.appendChild(clone);
+      });
+      track.appendChild(slide);
+      copyCanvases(group, slide);
+    });
     document.body.appendChild(overlay);
 
-    qs('#wmFsClose', overlay).addEventListener('click', deactivate);
-    qs('#wmFsSpeedRange', overlay).addEventListener('input', e => setSpeed(e.target.value));
-    qs('#wmFsPerView', overlay).addEventListener('change', e => setPerView(e.target.value));
-    qs('#wmFsAllMachines', overlay).addEventListener('click', () => {
-      state.allMachines = !state.allMachines;
-      localStorage.setItem(ALL_MACHINES_KEY, String(state.allMachines));
-      rebuildSlides();
-    });
-    qs('#wmFsMaintenance', overlay).addEventListener('click', () => {
-      state.showMaintenance = !state.showMaintenance;
-      localStorage.setItem(SHOW_MAINT_KEY, String(state.showMaintenance));
-      rebuildSlides();
-    });
-    qs('#wmFsPerView', overlay).value = String(state.perView);
-    rebuildSlides();
+    const per = qs('#wmFsCardsPerSlide', overlay);
+    if (per) { per.value = state.perPage; per.addEventListener('change', e => setPerPage(e.target.value)); }
+    qs('#wmFsClose', overlay)?.addEventListener('click', deactivate);
+    qs('#wmFsSpeedRange', overlay)?.addEventListener('input', e => setSpeed(e.target.value));
+    qs('#wmFsAllMachines', overlay)?.addEventListener('click', () => setIncludeHidden(!state.includeHidden));
+    qs('#wmFsMaintenance', overlay)?.addEventListener('click', () => setShowMaintenance(!state.showMaintenance));
     return overlay;
   }
 
+  function rebuildOverlay(options = {}) {
+    const keepPosition = !!options.keepPosition;
+    const previousIndex = state.index;
+    state.sourceCards = getCards();
+    const totalSlides = Math.max(1, Math.ceil(state.sourceCards.length / state.perPage));
+    state.index = keepPosition ? Math.min(previousIndex, totalSlides - 1) : 0;
+    if (!keepPosition) state.dir = 1;
+    makeOverlay(state.sourceCards);
+    update();
+    restart();
+  }
+
+  function scheduleLiveRefresh() {
+    if (!state.active || state.refreshPending) return;
+    state.refreshPending = true;
+    requestAnimationFrame(() => {
+      state.refreshPending = false;
+      if (!state.active) return;
+      rebuildOverlay({ keepPosition: true });
+    });
+  }
+
+  function startLiveRefresh() {
+    stopLiveRefresh();
+    state.liveRefreshTimer = setInterval(() => {
+      if (state.active) rebuildOverlay({ keepPosition: true });
+    }, 1000);
+
+    const root = qs('#fornoSections') || qs('#cardsContainer') || document.body;
+    if (window.MutationObserver && root) {
+      state.domObserver = new MutationObserver(mutations => {
+        if (!state.active) return;
+        const relevant = mutations.some(m =>
+          m.type === 'childList' ||
+          m.type === 'characterData' ||
+          (m.type === 'attributes' && ['class', 'style', 'data-maintenance', 'data-machine-id'].includes(m.attributeName))
+        );
+        if (relevant) scheduleLiveRefresh();
+      });
+      state.domObserver.observe(root, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-maintenance', 'data-machine-id']
+      });
+    }
+  }
+
+  function stopLiveRefresh() {
+    if (state.liveRefreshTimer) clearInterval(state.liveRefreshTimer);
+    state.liveRefreshTimer = null;
+    if (state.domObserver) state.domObserver.disconnect();
+    state.domObserver = null;
+    state.refreshPending = false;
+  }
+
   function activate() {
-    if (!sourceCards().length && !allCards().length) { alert('Nenhuma máquina encontrada para exibir no carrossel.'); return; }
+    state.sourceCards = getCards();
+    if (!state.sourceCards.length) { alert('Nenhuma máquina disponível para exibir no carrossel.'); return; }
     state.active = true;
     state.index = 0;
     state.dir = 1;
     document.body.classList.add('wm-fullscreen-active');
     const btn = qs('#fullscreenCarouselBtn');
     if (btn) { btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true'); btn.innerHTML = '<i class="fas fa-compress"></i> Sair Tela Cheia'; }
-    const overlay = makeOverlay();
+    const overlay = makeOverlay(state.sourceCards);
+    update(); restart();
+    startLiveRefresh();
     if (overlay.requestFullscreen) overlay.requestFullscreen().catch(() => {});
   }
 
@@ -219,6 +254,7 @@
     state.active = false;
     clearInterval(state.timer);
     state.timer = null;
+    stopLiveRefresh();
     document.body.classList.remove('wm-fullscreen-active');
     qs('#wmFullscreenCarouselOverlay')?.remove();
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
@@ -226,23 +262,44 @@
     if (btn) { btn.classList.remove('active'); btn.setAttribute('aria-pressed', 'false'); btn.innerHTML = '<i class="fas fa-expand"></i> Tela Cheia'; }
   }
 
+  function ensureHeaderButton() {
+    const controls = qs('.header-controls');
+    if (!controls) return;
+    qs('#themeBtn')?.remove();
+    if (!qs('#fullscreenCarouselBtn')) {
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.id = 'fullscreenCarouselBtn';
+      btn.type = 'button';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.innerHTML = '<i class="fas fa-expand"></i> Tela Cheia';
+      controls.insertBefore(btn, controls.firstChild);
+    }
+    if (!qs('#fullscreenSpeedControl')) {
+      const label = document.createElement('label');
+      label.className = 'speed-control';
+      label.id = 'fullscreenSpeedControl';
+      label.innerHTML = '<span>Velocidade</span><input type="range" id="fullscreenSpeedRange" min="2" max="30" step="1" value="' + state.speed + '"><strong id="fullscreenSpeedValue">' + state.speed + 's</strong>';
+      controls.insertBefore(label, qs('#fullscreenCarouselBtn').nextSibling);
+    }
+  }
+
   function css() {
     if (qs('#wmFullscreenCarouselCss')) return;
     const st = document.createElement('style');
     st.id = 'wmFullscreenCarouselCss';
     st.textContent = `
-      .speed-control{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border,#dbe3ef);border-radius:8px;background:var(--card-bg,#fff);color:var(--text,#0f172a);font-size:13px;font-weight:700}.speed-control input{width:110px;accent-color:var(--primary,#2563eb)}.speed-control strong{min-width:28px;color:var(--primary,#2563eb)}#fullscreenCarouselBtn.active{background:var(--primary,#2563eb)!important;color:#fff!important;border-color:var(--primary,#2563eb)!important}
-      .machine-prefix{background:transparent!important;color:#000!important;border-radius:0!important;padding:0!important;margin-left:4px!important;font-size:22px!important;line-height:1!important;font-weight:900!important;max-width:190px!important;letter-spacing:.2px}body.dark-mode .machine-prefix{color:#000!important;text-shadow:0 1px 0 rgba(255,255,255,.55)}
-      #wmFullscreenCarouselOverlay{position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#f8fafc 0%,#eaf2ff 100%);display:flex;flex-direction:column;padding:16px;overflow:hidden}.wm-fs-topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:10px 14px;background:rgba(255,255,255,.96);border:1px solid #dbe3ef;border-radius:18px;box-shadow:0 12px 30px rgba(15,23,42,.10)}.wm-fs-title{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:900;color:#0f172a;white-space:nowrap}.wm-fs-controls{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}.wm-fs-option,.wm-fs-close{border:1px solid #dbe3ef;border-radius:12px;padding:11px 14px;background:#fff;color:#0f172a;font-weight:900;cursor:pointer;box-shadow:0 4px 12px rgba(15,23,42,.06)}.wm-fs-option.active{background:#0f172a;color:#fff;border-color:#0f172a}.wm-fs-close{border:0;background:#2563eb;color:#fff}.wm-fs-select,.wm-fs-speed{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:900;color:#0f172a;background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:9px 12px}.wm-fs-select select{border:0;background:#eef2f7;border-radius:8px;padding:6px 10px;font-weight:900;color:#0f172a}.wm-fs-speed input{width:150px;accent-color:#2563eb}.wm-fs-speed strong{min-width:34px;color:#2563eb}.wm-fs-viewport{position:relative;flex:1;overflow:hidden;display:flex;align-items:center;margin-top:18px}.wm-fs-track{display:flex;width:100%;height:100%;transition:transform 900ms cubic-bezier(.22,.61,.36,1);will-change:transform}.wm-fs-slide{flex:0 0 100%;display:grid;grid-template-columns:repeat(var(--wm-fs-per-view),minmax(0,1fr));align-items:center;justify-items:center;gap:22px;padding:16px}.wm-fs-card-slot{width:100%;display:flex;align-items:center;justify-content:center}.wm-fs-empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;gap:10px;color:#334155;font-size:22px;font-weight:900}.wm-fs-counter{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.86);color:#fff;padding:8px 14px;border-radius:999px;font-weight:900;z-index:2}
-      .wm-fs-slide .machine-card{width:100%!important;min-width:0!important;max-width:980px!important;min-height:68vh!important;padding:32px!important;border-radius:28px!important;box-shadow:0 26px 70px rgba(15,23,42,.18)!important}.wm-fs-slide[style*="--wm-fs-per-view: 2"] .machine-card{min-height:62vh!important}.wm-fs-slide[style*="--wm-fs-per-view: 3"] .machine-card,.wm-fs-slide[style*="--wm-fs-per-view: 4"] .machine-card{min-height:54vh!important;padding:24px!important}.wm-fs-slide .card-header{margin-bottom:24px!important}.wm-fs-slide .machine-name{font-size:42px!important}.wm-fs-slide .machine-name i{font-size:34px!important}.wm-fs-slide .machine-prefix{font-size:44px!important;max-width:420px!important}.wm-fs-slide[style*="--wm-fs-per-view: 3"] .machine-name,.wm-fs-slide[style*="--wm-fs-per-view: 4"] .machine-name{font-size:28px!important}.wm-fs-slide[style*="--wm-fs-per-view: 3"] .machine-prefix,.wm-fs-slide[style*="--wm-fs-per-view: 4"] .machine-prefix{font-size:28px!important}.wm-fs-slide .gauges-container{gap:46px!important;justify-content:center!important}.wm-fs-slide .gauge-title{font-size:18px!important}.wm-fs-slide .gauge-canvas{width:200px!important;height:200px!important}.wm-fs-slide .gauge-canvas canvas{width:200px!important;height:200px!important}.wm-fs-slide .gauge-value{font-size:40px!important}.wm-fs-slide .gauge-label{font-size:15px!important}.wm-fs-slide[style*="--wm-fs-per-view: 3"] .gauge-canvas,.wm-fs-slide[style*="--wm-fs-per-view: 4"] .gauge-canvas,.wm-fs-slide[style*="--wm-fs-per-view: 3"] .gauge-canvas canvas,.wm-fs-slide[style*="--wm-fs-per-view: 4"] .gauge-canvas canvas{width:132px!important;height:132px!important}.wm-fs-slide[style*="--wm-fs-per-view: 3"] .gauge-value,.wm-fs-slide[style*="--wm-fs-per-view: 4"] .gauge-value{font-size:28px!important}.wm-fs-slide .status-indicators{font-size:20px!important;padding:20px!important}.wm-fs-slide .status-value{font-size:26px!important}.wm-fs-slide .details-btn{font-size:18px!important;padding:16px 22px!important}@media(max-width:1100px){.wm-fs-topbar{align-items:flex-start;flex-direction:column}.wm-fs-controls{justify-content:flex-start}.wm-fs-slide{grid-template-columns:1fr!important}.wm-fs-slide .machine-card{width:92vw!important;min-height:64vh!important}.wm-fs-speed input{width:110px}}@media(max-width:800px){.speed-control{width:100%;justify-content:space-between}.wm-fs-option,.wm-fs-close,.wm-fs-select,.wm-fs-speed{width:100%;justify-content:space-between}.wm-fs-title{font-size:20px}.wm-fs-slide .machine-card{width:92vw!important;min-height:62vh!important}}
+      .speed-control{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border,#dbe3ef);border-radius:8px;background:var(--card-bg,#fff);color:var(--text,#0f172a);font-size:13px;font-weight:700}.speed-control input{width:110px;accent-color:var(--primary,#2563eb)}.speed-control strong{min-width:32px;color:var(--primary,#2563eb)}#fullscreenCarouselBtn.active{background:var(--primary,#2563eb)!important;color:#fff!important;border-color:var(--primary,#2563eb)!important}
+      .machine-prefix{background:transparent!important;color:#000!important;border-radius:0!important;padding:0!important;margin-left:6px!important;font-size:22px!important;line-height:1!important;font-weight:900!important;max-width:230px!important;letter-spacing:.2px}body.dark-mode .machine-prefix{color:#000!important;text-shadow:0 1px 0 rgba(255,255,255,.55)}
+      #wmFullscreenCarouselOverlay{position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#f8fafc 0%,#eaf2ff 100%);display:flex;flex-direction:column;padding:16px;overflow:hidden}.wm-fs-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 14px;background:rgba(255,255,255,.96);border:1px solid #dbe3ef;border-radius:18px;box-shadow:0 12px 30px rgba(15,23,42,.10)}.wm-fs-title{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:900;color:#0f172a;white-space:nowrap}.wm-fs-controls{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}.wm-fs-chip,.wm-fs-close{border:1px solid #dbe3ef;border-radius:12px;padding:11px 14px;background:#fff;color:#0f172a;font-weight:900;cursor:pointer}.wm-fs-chip.active{background:#2563eb;color:#fff;border-color:#2563eb}.wm-fs-select,.wm-fs-speed{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:900;color:#0f172a;background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:8px 12px}.wm-fs-select select{border:0;background:#eef4ff;border-radius:8px;padding:6px 10px;font-weight:900}.wm-fs-speed input{width:150px;accent-color:#2563eb}.wm-fs-speed strong{min-width:38px;color:#2563eb}.wm-fs-close{background:#2563eb;color:#fff;border-color:#2563eb}.wm-fs-viewport{flex:1;overflow:hidden;display:flex;align-items:center;margin-top:18px}.wm-fs-track{display:flex;width:100%;height:100%;transition:transform 900ms cubic-bezier(.22,.61,.36,1);will-change:transform}.wm-fs-slide{flex:0 0 100%;display:grid;gap:22px;align-items:center;justify-content:center;padding:16px}.wm-fs-slide.cards-1{grid-template-columns:minmax(300px,min(74vw,980px))}.wm-fs-slide.cards-2{grid-template-columns:repeat(2,minmax(300px,46vw))}.wm-fs-slide.cards-3{grid-template-columns:repeat(3,minmax(270px,31vw))}.wm-fs-slide.cards-4{grid-template-columns:repeat(4,minmax(240px,23vw))}.wm-fs-counter{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.84);color:#fff;padding:8px 14px;border-radius:999px;font-weight:900}.wm-fs-empty{flex:0 0 100%;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:#0f172a}
+      .wm-fs-slide .machine-card{width:100%!important;min-width:0!important;min-height:68vh!important;padding:30px!important;border-radius:28px!important;box-shadow:0 26px 70px rgba(15,23,42,.18)!important}.wm-fs-slide.cards-2 .machine-card{min-height:62vh!important}.wm-fs-slide.cards-3 .machine-card,.wm-fs-slide.cards-4 .machine-card{min-height:56vh!important;padding:22px!important}.wm-fs-slide .machine-name{font-size:42px!important}.wm-fs-slide.cards-2 .machine-name{font-size:34px!important}.wm-fs-slide.cards-3 .machine-name,.wm-fs-slide.cards-4 .machine-name{font-size:26px!important}.wm-fs-slide .machine-name i{font-size:.82em!important}.wm-fs-slide .machine-prefix{font-size:44px!important;max-width:520px!important}.wm-fs-slide.cards-2 .machine-prefix{font-size:34px!important}.wm-fs-slide.cards-3 .machine-prefix,.wm-fs-slide.cards-4 .machine-prefix{font-size:26px!important}.wm-fs-slide .gauges-container{gap:56px!important;justify-content:center!important}.wm-fs-slide.cards-3 .gauges-container,.wm-fs-slide.cards-4 .gauges-container{gap:18px!important}.wm-fs-slide .gauge-title{font-size:18px!important}.wm-fs-slide .gauge-canvas,.wm-fs-slide .gauge-canvas canvas{width:210px!important;height:210px!important}.wm-fs-slide.cards-2 .gauge-canvas,.wm-fs-slide.cards-2 .gauge-canvas canvas{width:170px!important;height:170px!important}.wm-fs-slide.cards-3 .gauge-canvas,.wm-fs-slide.cards-3 .gauge-canvas canvas,.wm-fs-slide.cards-4 .gauge-canvas,.wm-fs-slide.cards-4 .gauge-canvas canvas{width:130px!important;height:130px!important}.wm-fs-slide .gauge-value{font-size:42px!important}.wm-fs-slide.cards-3 .gauge-value,.wm-fs-slide.cards-4 .gauge-value{font-size:28px!important}.wm-fs-slide .gauge-label{font-size:16px!important}.wm-fs-slide .status-indicators{font-size:22px!important;padding:22px!important}.wm-fs-slide.cards-3 .status-indicators,.wm-fs-slide.cards-4 .status-indicators{font-size:15px!important;padding:14px!important}.wm-fs-slide .status-value{font-size:28px!important}.wm-fs-slide .details-btn{font-size:18px!important;padding:16px 22px!important}
+      @media(max-width:1100px){.wm-fs-topbar{align-items:flex-start;flex-direction:column}.wm-fs-controls{justify-content:flex-start}.wm-fs-slide.cards-3,.wm-fs-slide.cards-4{grid-template-columns:repeat(2,minmax(280px,46vw))}}@media(max-width:760px){.speed-control{width:100%;justify-content:space-between}.wm-fs-slide,.wm-fs-slide.cards-1,.wm-fs-slide.cards-2,.wm-fs-slide.cards-3,.wm-fs-slide.cards-4{grid-template-columns:92vw}.wm-fs-slide .machine-card{min-height:68vh!important}.wm-fs-speed input{width:110px}}
     `;
     document.head.appendChild(st);
   }
 
   function bind() {
-    css();
-    setSpeed(state.speed);
-    setPerView(state.perView);
+    css(); ensureHeaderButton(); setSpeed(state.speed);
     const btn = qs('#fullscreenCarouselBtn');
     if (btn && btn.dataset.wmFsBound !== 'true') {
       btn.dataset.wmFsBound = 'true';
@@ -257,5 +314,8 @@
     document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && state.active) deactivate(); });
   }
 
+  window.WMFullscreenCarouselRefresh = scheduleLiveRefresh;
+  window.addEventListener('storage', scheduleLiveRefresh);
+  window.addEventListener('wmoldes:data-updated', scheduleLiveRefresh);
   document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', bind) : bind();
 })();
