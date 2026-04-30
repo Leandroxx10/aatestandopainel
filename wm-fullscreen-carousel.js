@@ -53,17 +53,29 @@
     return chunks;
   }
 
+  function copyCanvasPixels(srcCanvas, dstCanvas) {
+    if (!srcCanvas || !dstCanvas) return;
+    try {
+      const srcW = srcCanvas.width || 100;
+      const srcH = srcCanvas.height || 100;
+      dstCanvas.width = srcW;
+      dstCanvas.height = srcH;
+      const ctx = dstCanvas.getContext('2d');
+      ctx.clearRect(0, 0, srcW, srcH);
+      ctx.drawImage(srcCanvas, 0, 0, srcW, srcH);
+    } catch (_) {}
+  }
+
+  function copyCanvasesBetween(srcCard, dstCard) {
+    if (!srcCard || !dstCard) return;
+    const srcCanvases = qsa('canvas', srcCard);
+    const dstCanvases = qsa('canvas', dstCard);
+    srcCanvases.forEach((srcCanvas, index) => copyCanvasPixels(srcCanvas, dstCanvases[index]));
+  }
+
   function copyCanvases(srcCards, dstRoot) {
     const dstCards = qsa('.machine-card', dstRoot);
-    srcCards.forEach((src, i) => qsa('canvas', src).forEach((cv, j) => {
-      const dst = qsa('canvas', dstCards[i] || document.createElement('div'))[j];
-      if (!dst) return;
-      try {
-        dst.width = cv.width;
-        dst.height = cv.height;
-        dst.getContext('2d').drawImage(cv, 0, 0);
-      } catch (_) {}
-    }));
+    srcCards.forEach((src, i) => copyCanvasesBetween(src, dstCards[i]));
   }
 
   function setSpeed(v) {
@@ -112,7 +124,7 @@
     clone.dataset.status = source.dataset.status || '';
     clone.removeAttribute('id');
     qsa('[id]', clone).forEach(el => el.removeAttribute('id'));
-    copyCanvases([source], clone.parentElement || clone);
+    copyCanvasesBetween(source, clone);
     clone.style.transform = 'translateZ(0)';
   }
 
@@ -211,6 +223,7 @@
       });
       track.appendChild(slide);
       copyCanvases(group, slide);
+      requestAnimationFrame(() => copyCanvases(group, slide));
     });
     document.body.appendChild(overlay);
 
