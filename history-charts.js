@@ -72,6 +72,43 @@
   function toMinutes(time) { const [h, m] = String(time || '00:00').split(':').map(Number); return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0); }
   function getRolling24hWindow() { const endMs = Date.now(); return { startMs: endMs - 24 * 60 * 60 * 1000, endMs }; }
 
+  function getPeriodWindowMs(period, dateBRValue) {
+    if (period === '24h') return getRolling24hWindow();
+
+    const normalized = normalizeSelectedDate(dateBRValue || currentDate);
+    const br = normalized.br || dateBRValue || currentDate;
+    const parsed = parseBRDate(br);
+    if (!parsed) return null;
+
+    const build = (dayOffset, time, endSecond = 0) => {
+      const min = toMinutes(time);
+      return makeSPTimestampFromParts(
+        parsed.y, parsed.m, parsed.d + dayOffset,
+        Math.floor(min / 60), min % 60, endSecond
+      );
+    };
+
+    // Regra operacional: Turno 3 pertence ao dia em que termina.
+    // Ex.: selecionando 03/05, o Turno 3 é 02/05 22:00 até 03/05 06:00.
+    // Isso evita o bug em que lançamentos de madrugada não apareciam no filtro do turno.
+    if (period === 'shift1' || period === 'turno1') return { startMs: build(0, '06:00'), endMs: build(0, '14:00', 59) };
+    if (period === 'shift2' || period === 'turno2') return { startMs: build(0, '14:00'), endMs: build(0, '22:00', 59) };
+    if (period === 'shift3' || period === 'turno3') return { startMs: build(-1, '22:00'), endMs: build(0, '06:00', 59) };
+
+    if (period === 'custom') {
+      const start = $('customStartTime')?.value || '00:00';
+      const end = $('customEndTime')?.value || '23:59';
+      const startMin = toMinutes(start);
+      const endMin = toMinutes(end);
+      return {
+        startMs: build(0, start),
+        endMs: build(startMin > endMin ? 1 : 0, end, 59)
+      };
+    }
+
+    return getRolling24hWindow();
+  }
+
   function timestampFromRecordDateTime(record) {
     if (!record) return 0;
     const timestamp = Number(record.timestamp || record.serverTimestamp || record.createdAt || 0);
@@ -191,23 +228,9 @@
   }
 
   function chronologicalOrder(record, period = getActivePeriod()) {
-    if (period === '24h') return timestampFromRecordDateTime(record);
-
-    const minutes = (Number(record.horaNum) || 0) * 60 + (Number(record.minutoNum) || 0);
-    const range = getPeriodRange(period);
-    const start = toMinutes(range.start);
-    const end = toMinutes(range.end);
-    const nextBR = addDays(currentDate, 1);
-    const nextISO = getDateISOFromBR(nextBR);
-    const recordDate = record.data || record.dataISO || '';
-
-    if (start > end) {
-      if (recordDate === nextBR || recordDate === nextISO) return 1440 + minutes;
-      return minutes;
-    }
-
-    return minutes;
+    return timestampFromRecordDateTime(record);
   }
+
 
   function sortRecords(records, period = getActivePeriod()) {
     return [...(records || [])].sort((a, b) => {
@@ -294,16 +317,7 @@
       return [];
     }
 
-    const range = getPeriodRange(period);
-    const acceptedBR = new Set([dateBR]);
-    const acceptedISO = new Set([selected.iso || getDateISOFromBR(dateBR)]);
-
-    if (range.includeNextDate) {
-      const next = addDays(dateBR, 1);
-      acceptedBR.add(next);
-      acceptedISO.add(getDateISOFromBR(next));
-    }
-
+    const windowMs = getPeriodWindowMs(period, dateBR);
     const result = [];
     const rootSnapshot = await historicoRef.once('value');
     const rootRows = rootSnapshot.val() || {};
@@ -316,14 +330,8 @@
       // Aceita real_time e também registros antigos sem tipo, desde que tenham data/hora/timestamp.
       if (normalized.tipo && !['real_time', 'manual', 'painel_admin', 'abastecedor', 'digitacao_manual'].includes(String(normalized.tipo))) return;
 
-      if (period === '24h') {
-        const { startMs, endMs } = getRolling24hWindow();
-        const ts = timestampFromRecordDateTime(normalized);
-        if (ts >= startMs && ts <= endMs) result.push(normalized);
-        return;
-      }
-
-      if (acceptedBR.has(normalized.data) || acceptedISO.has(normalized.dataISO) || timestampMatchesDate(normalized.timestamp, dateBR, selected.iso || getDateISOFromBR(dateBR))) {
+      const ts = timestampFromRecordDateTime(normalized);
+      if (windowMs && ts >= windowMs.startMs && ts <= windowMs.endMs) {
         result.push(normalized);
       }
     });
@@ -348,36 +356,14 @@
   }
 
   function filterByPeriod(rows, period) {
-    const range = getPeriodRange(period);
-
-    if (period === '24h') {
-      const { startMs, endMs } = getRolling24hWindow();
-      return rows.filter(r => {
-        const ts = timestampFromRecordDateTime(r);
-        return ts >= startMs && ts <= endMs;
-      });
-    }
-
-    const start = toMinutes(range.start);
-    const end = toMinutes(range.end);
-    const selected = normalizeSelectedDate(currentDate);
-    const currentBR = selected.br || currentDate;
-    const currentISO = selected.iso || getDateISOFromBR(currentBR);
-    const nextBR = addDays(currentBR, 1);
-    const nextISO = getDateISOFromBR(nextBR);
-
-    return rows.filter(r => {
+    const windowMs = getPeriodWindowMs(period, currentDate);
+    if (!windowMs) return [];
+    return (rows || []).filter(r => {
       const ts = timestampFromRecordDateTime(r);
-      const sp = ts ? getSPParts(ts) : null;
-      const minutes = sp ? (sp.hourNum * 60 + sp.minuteNum) : ((r.horaNum || 0) * 60 + (r.minutoNum || 0));
-      const isCurrent = (sp && (sp.br === currentBR || sp.iso === currentISO)) || r.data === currentBR || r.dataISO === currentISO || timestampMatchesDate(r.timestamp, currentBR, currentISO);
-      const isNext = (sp && (sp.br === nextBR || sp.iso === nextISO)) || r.data === nextBR || r.dataISO === nextISO;
-
-      if (start <= end) return isCurrent && minutes >= start && minutes <= end;
-
-      return (isCurrent && minutes >= start) || (isNext && minutes <= end);
+      return ts >= windowMs.startMs && ts <= windowMs.endMs;
     });
   }
+
 
 
   function normalizeMaintenanceEvent(key, raw, machine) {
@@ -402,26 +388,10 @@
       : (window.db ? window.db.ref('manutencoes') : null);
     if (!ref || !machine) return [];
 
-    const range = period === '24h' ? getRolling24hWindow() : null;
-    let startMs, endMs;
-    if (range) {
-      startMs = range.startMs;
-      endMs = range.endMs;
-    } else {
-      const normalized = normalizeSelectedDate(dateBR || currentDate);
-      const br = normalized.br || dateBR || currentDate;
-      const parsed = parseBRDate(br);
-      if (!parsed) return [];
-      const periodRange = getPeriodRange(period);
-      const startMin = toMinutes(periodRange.start);
-      const endMin = toMinutes(periodRange.end);
-      startMs = makeSPTimestampFromParts(parsed.y, parsed.m, parsed.d, Math.floor(startMin / 60), startMin % 60, 0);
-      if (startMin <= endMin) {
-        endMs = makeSPTimestampFromParts(parsed.y, parsed.m, parsed.d, Math.floor(endMin / 60), endMin % 60, 59);
-      } else {
-        endMs = makeSPTimestampFromParts(parsed.y, parsed.m, parsed.d + 1, Math.floor(endMin / 60), endMin % 60, 59);
-      }
-    }
+    const windowMs = getPeriodWindowMs(period, dateBR || currentDate);
+    if (!windowMs) return [];
+    const { startMs, endMs } = windowMs;
+
 
     const aliases = [...machineAliases(machine)];
     const events = [];
