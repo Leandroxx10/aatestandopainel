@@ -1164,13 +1164,13 @@ async function saveMachineChanges(machineId) {
 
 async function saveImmediateHistory(machineId, oldValues, newValues) {
     try {
-        if (window.WMHistory && typeof WMHistory.saveMachineSnapshot === 'function') {
-            await WMHistory.saveMachineSnapshot(machineId, newValues || {}, {
+        if (window.WMHistory && typeof WMHistory.scheduleMachineSnapshot === 'function') {
+            WMHistory.scheduleMachineSnapshot(machineId, newValues || {}, {
                 origem: 'painel_admin',
-                source: 'admin_save_machine',
+                source: 'admin_save_machine_debounced',
                 field: 'todos'
             });
-            console.log(`✅ Histórico real_time salvo para máquina ${machineId}`);
+            console.log(`⏳ Histórico agendado com debounce para máquina ${machineId}`);
             return;
         }
 
