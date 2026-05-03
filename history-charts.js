@@ -12,6 +12,7 @@
   let currentDate = '';
   let chartType = 'line';
   let isLoading = false;
+  let currentMaintenanceIntervals = [];
 
   const datasetVisibility = {
     molde: true,
@@ -378,6 +379,134 @@
     });
   }
 
+
+  function normalizeMaintenanceEvent(key, raw, machine) {
+    raw = raw || {};
+    const start = Number(raw.startedAt || raw.inicio || raw.startAt || raw.timestamp || 0);
+    const endRaw = Number(raw.endedAt || raw.fim || raw.endAt || raw.finalizadoEm || 0);
+    if (!start) return null;
+    return {
+      id: key,
+      machineId: raw.machineId || machine,
+      startedAt: start,
+      endedAt: endRaw || Date.now(),
+      active: !endRaw || raw.status === 'ativa',
+      label: raw.label || 'Parada para manutenção',
+      motivo: raw.motivo || raw.reason || ''
+    };
+  }
+
+  async function getMaintenanceIntervals(machine, dateBR, period) {
+    const ref = (typeof manutencoesRef !== 'undefined' && manutencoesRef)
+      ? manutencoesRef
+      : (window.db ? window.db.ref('manutencoes') : null);
+    if (!ref || !machine) return [];
+
+    const range = period === '24h' ? getRolling24hWindow() : null;
+    let startMs, endMs;
+    if (range) {
+      startMs = range.startMs;
+      endMs = range.endMs;
+    } else {
+      const normalized = normalizeSelectedDate(dateBR || currentDate);
+      const br = normalized.br || dateBR || currentDate;
+      const parsed = parseBRDate(br);
+      if (!parsed) return [];
+      const periodRange = getPeriodRange(period);
+      const startMin = toMinutes(periodRange.start);
+      const endMin = toMinutes(periodRange.end);
+      startMs = makeSPTimestampFromParts(parsed.y, parsed.m, parsed.d, Math.floor(startMin / 60), startMin % 60, 0);
+      if (startMin <= endMin) {
+        endMs = makeSPTimestampFromParts(parsed.y, parsed.m, parsed.d, Math.floor(endMin / 60), endMin % 60, 59);
+      } else {
+        endMs = makeSPTimestampFromParts(parsed.y, parsed.m, parsed.d + 1, Math.floor(endMin / 60), endMin % 60, 59);
+      }
+    }
+
+    const aliases = [...machineAliases(machine)];
+    const events = [];
+    for (const alias of aliases) {
+      try {
+        const snap = await ref.child(alias).once('value');
+        const rows = snap.val() || {};
+        Object.keys(rows).forEach(k => {
+          const ev = normalizeMaintenanceEvent(k, rows[k], machine);
+          if (!ev) return;
+          if (ev.endedAt >= startMs && ev.startedAt <= endMs) events.push(ev);
+        });
+      } catch (err) {
+        console.warn('Erro ao carregar manutenções do histórico', alias, err);
+      }
+    }
+
+    const unique = {};
+    events.forEach(ev => { unique[ev.id] = ev; });
+    return Object.values(unique).sort((a, b) => a.startedAt - b.startedAt);
+  }
+
+  function makeMaintenancePlugin(points, intervals) {
+    return {
+      id: 'wmMaintenanceIntervals',
+      beforeDatasetsDraw(chartInstance) {
+        if (!intervals || !intervals.length || !points || !points.length) return;
+        const chartArea = chartInstance.chartArea;
+        const xScale = chartInstance.scales.x;
+        const ctx = chartInstance.ctx;
+        if (!chartArea || !xScale) return;
+
+        const pointTs = points.map(p => Number(p.timestamp || 0));
+        const firstTs = pointTs[0];
+        const lastTs = pointTs[pointTs.length - 1] || firstTs;
+        const span = Math.max(1, lastTs - firstTs);
+        const xForTs = (ts) => {
+          ts = Math.max(firstTs, Math.min(lastTs, Number(ts || firstTs)));
+          if (pointTs.length === 1) return xScale.getPixelForValue(0);
+          for (let i = 0; i < pointTs.length - 1; i++) {
+            const a = pointTs[i], b = pointTs[i + 1];
+            if (ts >= a && ts <= b) {
+              const x1 = xScale.getPixelForValue(i);
+              const x2 = xScale.getPixelForValue(i + 1);
+              const localSpan = Math.max(1, b - a);
+              return x1 + ((ts - a) / localSpan) * (x2 - x1);
+            }
+          }
+          const ratio = (ts - firstTs) / span;
+          return chartArea.left + ratio * (chartArea.right - chartArea.left);
+        };
+
+        ctx.save();
+        intervals.forEach(ev => {
+          const startsBeforeLast = ev.startedAt <= lastTs;
+          const endsAfterFirst = ev.endedAt >= firstTs;
+          if (!startsBeforeLast || !endsAfterFirst) return;
+          let x1 = xForTs(ev.startedAt);
+          let x2 = xForTs(ev.endedAt);
+          if (Math.abs(x2 - x1) < 18) x2 = x1 + 18;
+          x1 = Math.max(chartArea.left, Math.min(chartArea.right, x1));
+          x2 = Math.max(chartArea.left, Math.min(chartArea.right, x2));
+          if (x2 < x1) [x1, x2] = [x2, x1];
+
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+          ctx.fillRect(x1, chartArea.top, Math.max(2, x2 - x1), chartArea.bottom - chartArea.top);
+          ctx.strokeStyle = 'rgba(217, 119, 6, 0.55)';
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath(); ctx.moveTo(x1, chartArea.top); ctx.lineTo(x1, chartArea.bottom); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x2, chartArea.top); ctx.lineTo(x2, chartArea.bottom); ctx.stroke();
+          ctx.setLineDash([]);
+
+          const label = ev.motivo ? `Parada para manutenção · ${ev.motivo}` : 'Parada para manutenção';
+          const mid = (x1 + x2) / 2;
+          ctx.font = 'bold 12px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#92400e';
+          ctx.fillText(label, mid, chartArea.top + 22, Math.max(80, x2 - x1 - 8));
+        });
+        ctx.restore();
+      }
+    };
+  }
+
   function safeDestroyChart() {
     const canvas = $('historyChart');
 
@@ -473,7 +602,7 @@
 
     safeDestroyChart();
 
-    const points = sortRecords(rows).map(item => ({
+    let points = sortRecords(rows).map(item => ({
       label: item.data && item.data !== currentDate ? `${item.hora} (${item.data.slice(0, 5)})` : item.hora,
       molde: item.molde || 0,
       blank: item.blank || 0,
@@ -481,6 +610,19 @@
       funil: item.funil || 0,
       timestamp: item.timestamp || 0
     }));
+
+    // Se a máquina ficou parada e não houve produção no período, ainda desenha o eixo
+    // para a faixa de manutenção aparecer no gráfico.
+    if (!points.length && currentMaintenanceIntervals.length) {
+      const first = currentMaintenanceIntervals[0];
+      const last = currentMaintenanceIntervals[currentMaintenanceIntervals.length - 1];
+      const startParts = getSPParts(first.startedAt);
+      const endParts = getSPParts(last.endedAt);
+      points = [
+        { label: startParts.time, molde: 0, blank: 0, neckring: 0, funil: 0, timestamp: first.startedAt },
+        { label: endParts.time, molde: 0, blank: 0, neckring: 0, funil: 0, timestamp: last.endedAt }
+      ];
+    }
 
     setChartWidth(points.length);
 
@@ -542,7 +684,7 @@
           x: { ticks: { autoSkip: false, maxRotation: 0 } }
         }
       },
-      plugins: [makeEndLabelsPlugin()]
+      plugins: [makeMaintenancePlugin(points, currentMaintenanceIntervals), makeEndLabelsPlugin()]
     });
 
     window.historyChart = chart;
@@ -655,11 +797,13 @@
     try {
       const period = getActivePeriod();
       const data = await getHistoryFromFirebase(machine, date, period);
+      currentMaintenanceIntervals = await getMaintenanceIntervals(machine, date, period);
       currentData = data;
       displayedData = sortRecords(filterByPeriod(data, period), period);
 
       if (!displayedData.length) {
-        showEmpty(machine, date, period);
+        if (currentMaintenanceIntervals.length) hideEmpty();
+        else showEmpty(machine, date, period);
         buildChart([]);
         updateTable([]);
         updateInsights([]);
