@@ -832,51 +832,45 @@ async function alterar(maquinaId, tipo, delta) {
         mostrarNotificacao('Máquina em parada para manutenção.', 'warning');
         return;
     }
-    const writeKey = `${maquinaId}:${tipo}`;
-    if (pendingMachineWrites.has(writeKey)) {
-        return;
+
+    const normalizedTipo = (window.WMHistory && WMHistory.normalizeField) ? WMHistory.normalizeField(tipo) : tipo;
+    const writeKey = `${maquinaId}:${normalizedTipo}`;
+    if (pendingMachineWrites.has(writeKey)) return;
+
+    const element = document.getElementById(`${maquinaId}-${tipo}`) || document.getElementById(`${maquinaId}-${normalizedTipo}`);
+    const previousValue = parseInt(element?.textContent) || 0;
+    const optimisticValue = Math.max(0, previousValue + Number(delta || 0));
+
+    if (element) {
+        element.textContent = optimisticValue;
+        element.style.transform = 'scale(1.1)';
+        element.style.color = '#0ea5e9';
+        setTimeout(() => {
+            element.style.transform = '';
+            element.style.color = '';
+        }, 200);
     }
 
-    const element = document.getElementById(`${maquinaId}-${tipo}`);
-    if (!element) return;
-
-    const currentValue = parseInt(element.textContent) || 0;
-    const newValue = Math.max(0, currentValue + delta);
-
-    if (newValue === currentValue) return;
     pendingMachineWrites.add(writeKey);
 
-    // Atualização imediata na tela
-    element.textContent = newValue;
-    element.style.transform = 'scale(1.1)';
-    element.style.color = '#0ea5e9';
-    setTimeout(() => {
-        element.style.transform = '';
-        element.style.color = '';
-    }, 200);
-
     try {
-        if (typeof setWithAudit === 'function') {
-            await setWithAudit(`maquinas/${maquinaId}/${tipo}`, newValue, {
-                action: `${delta > 0 ? 'adicionou' : 'removeu'} ${Math.abs(delta)} em ${tipo} da máquina ${maquinaId}`,
-                details: `Alteração rápida no painel principal: ${currentValue} → ${newValue}.`,
-                entityType: 'machine_change',
-                entityId: maquinaId,
-                extra: {
-                    machineId: maquinaId,
-                    field: tipo,
-                    origem: 'botao_rapido',
-                    delta,
-                    before: currentValue,
-                    after: newValue
-                }
+        let committedValue;
+        if (window.WMHistory && typeof WMHistory.atomicDelta === 'function') {
+            committedValue = await WMHistory.atomicDelta(maquinaId, normalizedTipo, delta, {
+                origem: 'botao_rapido',
+                field: normalizedTipo
             });
         } else {
-            await db.ref(`maquinas/${maquinaId}/${tipo}`).set(newValue);
+            const ref = db.ref(`maquinas/${maquinaId}/${normalizedTipo}`);
+            const tx = await ref.transaction(current => Math.max(0, (parseInt(current, 10) || 0) + Number(delta || 0)));
+            if (!tx.committed) throw new Error('Transação cancelada.');
+            committedValue = parseInt(tx.snapshot.val(), 10) || 0;
         }
+
+        if (element) element.textContent = committedValue;
     } catch (error) {
         console.error('❌ Erro ao alterar quantidade:', error);
-        element.textContent = currentValue;
+        if (element) element.textContent = previousValue;
         mostrarNotificacao(`Erro ao salvar alteração da máquina ${maquinaId}.`, 'error');
     } finally {
         pendingMachineWrites.delete(writeKey);
@@ -1794,6 +1788,9 @@ async function atualizarPorInput(maquinaId, tipo, valor) {
             });
         } else {
             await db.ref(`maquinas/${maquinaId}/${tipo}`).set(novoValor);
+        }
+        if (window.WMHistory && typeof WMHistory.saveSnapshotFromFirebase === 'function') {
+            await WMHistory.saveSnapshotFromFirebase(maquinaId, { origem: 'digitacao_manual', field: tipo, source: 'input_manual' });
         }
     } catch (error) {
         console.error('❌ Erro ao atualizar valor digitado:', error);

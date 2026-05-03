@@ -433,8 +433,10 @@ async function writeAuditLog({ action, details = '', targetPath = '', entityType
             return;
         }
 
-        if ((entityType === 'machine_change' || entityType === 'machine_prefix') && historicoRef) {
-            await historicoRef.child(fingerprint).set({
+        // Histórico de gráfico é salvo em /historico/{maquina}/{registro} pelo WMHistory.
+        // Mantém auditoria separada para não criar registros invisíveis na raiz de /historico.
+        if ((entityType === 'machine_change' || entityType === 'machine_prefix') && db) {
+            await db.ref('historico_auditoria').child(fingerprint).set({
                 ...payload,
                 machineId: safeExtra?.machineId || entityId || '',
                 field: safeExtra?.field || '',

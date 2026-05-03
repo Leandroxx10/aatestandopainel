@@ -1132,12 +1132,13 @@ async function saveMachineChanges(machineId) {
             last_updated: Date.now(),
             updated_by: 'Administrador'
         };
-        
+
+        const beforeMachine = { ...(allAdminMachines[machineId] || {}) };
         await maquinasRef.child(machineId).update(updates);
         
         allAdminMachines[machineId] = { ...allAdminMachines[machineId], ...updates };
         
-        saveImmediateHistory(machineId, allAdminMachines[machineId], updates);
+        await saveImmediateHistory(machineId, beforeMachine, allAdminMachines[machineId]);
         
         showAlert('sucesso', `Máquina ${machineId} atualizada com sucesso!`);
         
@@ -1161,32 +1162,37 @@ async function saveMachineChanges(machineId) {
     }
 }
 
-function saveImmediateHistory(machineId, oldValues, newValues) {
-    const timestamp = Date.now();
-    const historyEntry = {
-        machineId: machineId,
-        timestamp: timestamp,
-        date: new Date(timestamp).toISOString(),
-        old_molde: oldValues.molde || 0,
-        new_molde: newValues.molde || 0,
-        old_blank: oldValues.blank || 0,
-        new_blank: newValues.blank || 0,
-        old_neckring: oldValues.neck_ring || 0,
-        new_neckring: newValues.neck_ring || 0,
-        old_funil: oldValues.funil || 0,
-        new_funil: newValues.funil || 0,
-        molde_change: (newValues.molde || 0) - (oldValues.molde || 0),
-        blank_change: (newValues.blank || 0) - (oldValues.blank || 0),
-        user: 'Administrador (Painel Admin)'
-    };
-    
-    historicoRef.child(machineId).push(historyEntry)
-        .then(() => {
-            console.log(`✅ Histórico salvo para máquina ${machineId}`);
-        })
-        .catch(error => {
-            console.error("❌ Erro ao salvar histórico:", error);
-        });
+async function saveImmediateHistory(machineId, oldValues, newValues) {
+    try {
+        if (window.WMHistory && typeof WMHistory.saveMachineSnapshot === 'function') {
+            await WMHistory.saveMachineSnapshot(machineId, newValues || {}, {
+                origem: 'painel_admin',
+                source: 'admin_save_machine',
+                field: 'todos'
+            });
+            console.log(`✅ Histórico real_time salvo para máquina ${machineId}`);
+            return;
+        }
+
+        const timestamp = Date.now();
+        const historyEntry = {
+            machineId: machineId,
+            timestamp: timestamp,
+            data: new Date(timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+            dataISO: new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date(timestamp)),
+            hora: new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(timestamp)),
+            molde: newValues.molde || 0,
+            blank: newValues.blank || 0,
+            neck_ring: newValues.neck_ring || 0,
+            funil: newValues.funil || 0,
+            tipo: 'real_time',
+            origem: 'painel_admin'
+        };
+        await historicoRef.child(machineId).push(historyEntry);
+        console.log(`✅ Histórico salvo para máquina ${machineId}`);
+    } catch (error) {
+        console.error("❌ Erro ao salvar histórico:", error);
+    }
 }
 
 // ================= PREFIXOS (SEÇÃO ANTIGA) =================

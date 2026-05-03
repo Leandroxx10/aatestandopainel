@@ -73,7 +73,7 @@
 
   function timestampFromRecordDateTime(record) {
     if (!record) return 0;
-    const timestamp = Number(record.timestamp || 0);
+    const timestamp = Number(record.timestamp || record.serverTimestamp || record.createdAt || 0);
     if (timestamp > 0) return timestamp;
     let y, m, d;
     if (record.dataISO && /^\d{4}-\d{2}-\d{2}$/.test(String(record.dataISO))) [y, m, d] = String(record.dataISO).split('-').map(Number);
@@ -241,6 +241,23 @@
     const snapshot = await historicoRef.child(machine).once('value');
     const rows = snapshot.val() || {};
     const result = [];
+
+    // Compatibilidade: versões antigas salvaram alguns eventos direto em /historico/{fingerprint},
+    // fora de /historico/{maquina}. Esses registros eram invisíveis no gráfico.
+    // Carrega somente quando necessário e filtra pela machineId/path.
+    try {
+      const rootSnapshot = await historicoRef.once('value');
+      const rootRows = rootSnapshot.val() || {};
+      Object.keys(rootRows).forEach(rootKey => {
+        const value = rootRows[rootKey];
+        if (!value || typeof value !== 'object') return;
+        if (value.machineId !== machine && !(String(value.path || value.targetPath || '').includes(`maquinas/${machine}/`))) return;
+        if (rows[rootKey]) return;
+        rows[`legacy_${rootKey}`] = value;
+      });
+    } catch (legacyError) {
+      console.warn('Não foi possível ler histórico legado da raiz:', legacyError);
+    }
 
     Object.keys(rows).forEach(key => {
       const raw = rows[key] || {};
