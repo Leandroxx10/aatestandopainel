@@ -1634,3 +1634,32 @@ button[onclick*="exportHistoryPdf"] {
     justify-content: center;
   }
 }
+
+
+/* V7: ação de excluir no modal de comentários */
+.history-comment-card { position: relative; }
+.history-comment-delete-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.92);
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+  box-shadow: 0 8px 22px rgba(15,23,42,.08);
+}
+.history-comment-delete-btn:hover {
+  transform: translateY(-1px);
+  background: #fee2e2;
+  color: #dc2626;
+  box-shadow: 0 12px 28px rgba(220,38,38,.15);
+}
+.history-comment-card.is-deleting { opacity: .55; pointer-events: none; }
+.history-comment-card-top { padding-right: 46px; }

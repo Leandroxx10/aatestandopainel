@@ -88,12 +88,12 @@
       );
     };
 
-    // Regra operacional: Turno 3 pertence ao dia em que termina.
-    // Ex.: selecionando 03/05, o Turno 3 é 02/05 22:00 até 03/05 06:00.
-    // Isso evita o bug em que lançamentos de madrugada não apareciam no filtro do turno.
+    // Regra operacional: Turno 3 pertence ao dia em que começa.
+    // Ex.: selecionando 03/05, o Turno 3 é 03/05 22:00 até 04/05 06:00.
+    // Mantém a data selecionada como início do turno noturno.
     if (period === 'shift1' || period === 'turno1') return { startMs: build(0, '06:00'), endMs: build(0, '14:00', 59) };
     if (period === 'shift2' || period === 'turno2') return { startMs: build(0, '14:00'), endMs: build(0, '22:00', 59) };
-    if (period === 'shift3' || period === 'turno3') return { startMs: build(-1, '22:00'), endMs: build(0, '06:00', 59) };
+    if (period === 'shift3' || period === 'turno3') return { startMs: build(0, '22:00'), endMs: build(1, '06:00', 59) };
 
     if (period === 'custom') {
       const start = $('customStartTime')?.value || '00:00';
@@ -179,8 +179,18 @@
     });
   }
 
+  function isVisibleElement(el) {
+    if (!el || !el.isConnected) return false;
+    const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    return !rect || rect.width > 0 || rect.height > 0;
+  }
+
   function getActivePeriod() {
-    const active = document.querySelector('.period-btn.active, .period-option.active');
+    const activeButtons = Array.from(document.querySelectorAll('.period-btn.active, .period-option.active, [data-period].active'))
+      .filter(isVisibleElement);
+    const active = activeButtons[activeButtons.length - 1] || document.querySelector('.period-btn.active, .period-option.active, [data-period].active');
     return active ? (active.getAttribute('data-period') || '24h') : '24h';
   }
 
@@ -908,10 +918,11 @@
       btn.addEventListener('click', e => {
         e.preventDefault();
 
-        document.querySelectorAll('.period-btn, .period-option').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.period-btn, .period-option, [data-period]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
         const period = btn.dataset.period || '24h';
+        window.WMOLDES_ACTIVE_HISTORY_PERIOD = period;
         const custom = $('customTimeContainer');
         if (custom) custom.style.display = period === 'custom' ? 'block' : 'none';
 

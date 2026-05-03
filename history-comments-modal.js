@@ -255,11 +255,12 @@
       .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
   }
 
-  function collectRegularComments(node, output, source, parentMachine = '') {
+  function collectRegularComments(node, output, source, parentMachine = '', parentPath = source) {
     if (!node || typeof node !== 'object') return;
 
     Object.entries(node).forEach(([key, value]) => {
       if (!value || typeof value !== 'object') return;
+      const refPath = `${parentPath}/${key}`;
 
       const message =
         value.commentText ||
@@ -294,6 +295,7 @@
           id: key,
           type: 'comment',
           source,
+          refPath,
           machine,
           author:
             value.author ||
@@ -321,7 +323,7 @@
             formatDate(rawTimestamp)
         });
       } else {
-        collectRegularComments(value, output, source, parentMachine || key);
+        collectRegularComments(value, output, source, parentMachine || key, refPath);
       }
     });
   }
@@ -350,6 +352,7 @@
             id: noteId,
             type: 'note',
             source,
+            refPath: `${source}/${machineKey}/${dateKey}/${noteId}`,
             machine: normalizeMachine(note.machine || machineKey),
             author: note.author || note.autor || note.email || 'Usuário',
             text: message,
@@ -448,7 +451,11 @@
           data-date="${esc(item.date || item.createdAtText || '')}"
           data-start-time="${esc(item.startTime || '')}"
           data-end-time="${esc(item.endTime || '')}"
-          data-type="${esc(item.type || '')}">
+          data-type="${esc(item.type || '')}"
+          data-ref-path="${esc(item.refPath || '')}">
+          <button type="button" class="history-comment-delete-btn" data-history-comment-delete title="Excluir comentário" aria-label="Excluir comentário">
+            <i class="fas fa-times"></i>
+          </button>
           <div class="history-comment-card-top">
             <div class="history-comment-machine">
               <i class="fas ${item.type === 'note' ? 'fa-sticky-note' : 'fa-industry'}"></i>
@@ -473,6 +480,45 @@
       `;
     }).join('');
   }
+
+
+  async function deleteCommentByPath(refPath) {
+    if (!refPath) throw new Error('Referência do comentário não encontrada.');
+    if (!window.firebase || !firebase.database) throw new Error('Firebase não disponível.');
+    await firebase.database().ref(refPath).remove();
+  }
+
+  async function handleDeleteClick(button) {
+    const card = button.closest('.history-comment-card');
+    const refPath = card?.dataset?.refPath || '';
+    if (!refPath) {
+      alert('Não foi possível identificar o caminho deste comentário no Firebase.');
+      return;
+    }
+    const ok = confirm('Excluir este comentário/anotação? Esta ação não pode ser desfeita.');
+    if (!ok) return;
+    button.disabled = true;
+    card.classList.add('is-deleting');
+    try {
+      await deleteCommentByPath(refPath);
+      state.comments = state.comments.filter(item => item.refPath !== refPath);
+      applyFilters();
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao excluir: ' + (error.message || error));
+      button.disabled = false;
+      card.classList.remove('is-deleting');
+    }
+  }
+
+  document.addEventListener('click', event => {
+    const del = event.target.closest('[data-history-comment-delete]');
+    if (del) {
+      event.preventDefault();
+      event.stopPropagation();
+      handleDeleteClick(del);
+    }
+  });
 
   document.addEventListener('DOMContentLoaded', () => {
     ensureUI();

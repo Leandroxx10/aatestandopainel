@@ -112,9 +112,17 @@
     return matched;
   }
 
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    return !rect || rect.width > 0 || rect.height > 0;
+  }
+
   function setPeriodForTime(startTime) {
     const period = choosePeriodForTime(startTime);
-    const candidates = Array.from(document.querySelectorAll('.period-btn, .period-option, [data-period]'));
+    const candidates = Array.from(document.querySelectorAll('.period-btn, .period-option, [data-period]')).filter(isVisible);
 
     let target = candidates.find(btn => String(btn.getAttribute('data-period') || '').toLowerCase() === period);
 
@@ -124,7 +132,10 @@
 
     if (!target) target = candidates.find(btn => String(btn.getAttribute('data-period') || '').toLowerCase() === '24h');
 
+    document.querySelectorAll('.period-btn, .period-option, [data-period]').forEach(btn => btn.classList.remove('active'));
     if (target) {
+      target.classList.add('active');
+      window.WMOLDES_ACTIVE_HISTORY_PERIOD = period;
       target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }
   }
